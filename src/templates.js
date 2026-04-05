@@ -1254,14 +1254,22 @@ ${BASE_CSS}
   function setSessionAndRedirect(user) {
     if (_redirecting) return;
     _redirecting = true;
-    user.getIdToken(true).then(function(token) {
+
+    // Get token with 8-second timeout to prevent infinite loading
+    var tokenPromise = user.getIdToken(true);
+    var timeoutPromise = new Promise(function(_, reject) {
+      setTimeout(function() { reject(new Error('Timeout obteniendo token de Firebase')); }, 8000);
+    });
+
+    Promise.race([tokenPromise, timeoutPromise]).then(function(token) {
       document.cookie = '__session=' + token + '; path=/; max-age=3600; SameSite=Lax';
-      // Redirect immediately — trust client-side Firebase auth
-      // Server will verify cookie on the next request
       window.location.replace('/');
     }).catch(function(err) {
       _redirecting = false;
       console.error('Auth redirect error:', err);
+      setLoading(googleSignInBtn, googleSignInBtn, false);
+      setLoading(emailSubmitBtn, emailSubmitText, false);
+      showError('Error al completar la autenticacion (' + err.message + '). Intenta de nuevo.');
     });
   }
 
@@ -1421,7 +1429,8 @@ ${BASE_CSS}
     setLoading(googleSignInBtn, googleSignInBtn, true);
 
     var provider = new firebase.auth.GoogleAuthProvider();
-    provider.addScope('https://www.googleapis.com/auth/drive');
+    // NO Drive scope here — Firebase Auth is for identity only.
+    // Drive permissions are handled separately via /api/auth (Google OAuth2).
 
     auth.signInWithPopup(provider).then(function(result) {
       // Store Google access token for Drive uploads
