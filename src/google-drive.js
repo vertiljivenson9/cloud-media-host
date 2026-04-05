@@ -38,10 +38,13 @@ export async function uploadFile(serviceAccount, folderId, fileName, contentType
 
   if (!initResponse.ok) {
     const error = await initResponse.text();
-    throw new Error(`Drive upload init failed: ${error}`);
+    throw new Error(`Drive upload init failed (${initResponse.status}): ${error}`);
   }
 
   const uploadUrl = initResponse.headers.get('Location');
+  if (!uploadUrl) {
+    throw new Error('Drive upload init returned no Location header. Status: ' + initResponse.status);
+  }
 
   // Step 2: Upload the file data
   const uploadResponse = await fetch(uploadUrl, {
@@ -52,10 +55,19 @@ export async function uploadFile(serviceAccount, folderId, fileName, contentType
 
   if (!uploadResponse.ok) {
     const error = await uploadResponse.text();
-    throw new Error(`Drive upload failed: ${error}`);
+    throw new Error(`Drive upload failed (${uploadResponse.status}): ${error}`);
   }
 
-  const fileInfo = await uploadResponse.json();
+  let fileInfo;
+  try {
+    fileInfo = await uploadResponse.json();
+  } catch(e) {
+    throw new Error('Drive upload response was not valid JSON');
+  }
+
+  if (!fileInfo || !fileInfo.id) {
+    throw new Error('Drive upload returned no file ID in response');
+  }
 
   // Step 3: Make file publicly accessible (anyone with link can view)
   try {

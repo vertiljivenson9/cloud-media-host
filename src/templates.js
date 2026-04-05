@@ -1266,7 +1266,7 @@ function uploadFiles(files) {
     if (fileIndex >= files.length) {
       label.textContent = 'Completado';
       fill.style.width = '100%';
-      setTimeout(() => location.reload(), 800);
+      setTimeout(() => location.reload(), 4000);
       return;
     }
 
@@ -1313,12 +1313,15 @@ function uploadFiles(files) {
       } else {
         try {
           const d = JSON.parse(xhr.responseText);
-          if (!d.success) {
+          if (d.success && d.file) {
+            console.log('Upload OK:', d.file.name, '->', d.file.id);
+          } else {
             toast(d.error || 'Error al subir', 'error');
             fill.style.background = 'var(--danger)';
             setTimeout(() => { fill.style.background = 'var(--accent)'; }, 1500);
           }
         } catch(e) {
+          console.error('Respuesta inesperada del servidor:', xhr.responseText);
           toast('Error de respuesta del servidor', 'error');
           fill.style.background = 'var(--danger)';
           setTimeout(() => { fill.style.background = 'var(--accent)'; }, 1500);

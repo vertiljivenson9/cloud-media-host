@@ -193,17 +193,19 @@ async function handleIndex(request, env) {
   }
 
   // Configured → show dashboard
-  const fileIds = await env.MEDIA_KV.get('app:files', 'json') || [];
+  const fileIds = await env.MEDIA_KV.get('app:files', 'json');
+  const safeFileIds = Array.isArray(fileIds) ? fileIds : [];
   const files = [];
-  for (const id of fileIds) {
+  for (const id of safeFileIds) {
     const fileData = await env.MEDIA_KV.get(`file:${id}`, 'json');
     if (fileData) files.push(fileData);
   }
 
   // Load folders
-  const folderIds = await env.MEDIA_KV.get('app:folders', 'json') || [];
+  const folderIds = await env.MEDIA_KV.get('app:folders', 'json');
+  const safeFolderIds = Array.isArray(folderIds) ? folderIds : [];
   const folders = [];
-  for (const id of folderIds) {
+  for (const id of safeFolderIds) {
     const folderData = await env.MEDIA_KV.get(`folder:${id}`, 'json');
     if (folderData) folders.push(folderData);
   }
@@ -256,6 +258,9 @@ async function handleSaveConfig(request, env) {
     const body = await request.json();
     const { drive_credentials, folders, cloudinary_cloud_name, cloudinary_upload_preset, admin_password, drive_folder_id } = body;
 
+    // Check if there's already a config FIRST (before using it)
+    const existingConfig = await getConfig(env);
+
     // Support both old format (single drive_folder_id) and new format (folders array)
     const folderList = folders || (drive_folder_id ? [{ name: 'Principal', drive_folder_id }] : []);
 
@@ -273,9 +278,6 @@ async function handleSaveConfig(request, env) {
     if (!credentials.client_email || !credentials.private_key) {
       return json({ success: false, error: 'Service Account JSON inválido (faltan client_email o private_key)' }, 400);
     }
-
-    // Check if there's already a config (needs admin password to overwrite)
-    const existingConfig = await getConfig(env);
     if (existingConfig?.drive_credentials && existingConfig.admin_password_hash) {
       const isAdmin = await verifyAdmin(request, env);
       if (!isAdmin) {
@@ -598,6 +600,7 @@ async function handleUpload(request, env, url) {
 
     const fileName = file.name || 'unnamed';
     const contentType = file.type || 'application/octet-stream';
+    console.log('Upload request:', fileName, contentType, file.size || '?', 'bytes');
 
     if (!isAllowedType(contentType)) {
       return json({ success: false, error: `Tipo no permitido: ${contentType}. Usa MP3, MP4, ZIP o imágenes.` }, 400);
@@ -630,6 +633,8 @@ async function handleUpload(request, env, url) {
       }
     }
 
+    console.log('Target Drive folder:', targetDriveFolderId);
+
     // Upload to Google Drive
     const driveResult = await uploadFile(
       config.drive_credentials,
@@ -638,6 +643,8 @@ async function handleUpload(request, env, url) {
       contentType,
       fileData
     );
+
+    console.log('Drive upload OK:', driveResult.id, driveResult.name);
 
     // Generate file ID
     const fileId = generateId();
@@ -689,10 +696,13 @@ async function handleUpload(request, env, url) {
     // Save file record to KV
     await env.MEDIA_KV.put(`file:${fileId}`, JSON.stringify(fileRecord));
 
-    // Add to file list
-    const filesList = await env.MEDIA_KV.get('app:files', 'json') || [];
+    // Add to file list (null-safe)
+    let filesList = await env.MEDIA_KV.get('app:files', 'json');
+    if (!Array.isArray(filesList)) filesList = [];
     filesList.unshift(fileId);
     await env.MEDIA_KV.put('app:files', JSON.stringify(filesList));
+
+    console.log('File saved to KV:', fileId, 'Total files:', filesList.length);
 
     return json({
       success: true,
