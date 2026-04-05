@@ -345,6 +345,19 @@ ${BASE_CSS}
     </div>
   </div>
 
+  <div class="card setup-card" style="border-color:var(--border);background:linear-gradient(135deg, var(--bg-surface) 0%, rgba(249,115,22,0.03) 100%)">
+    <h2>
+      <span style="color:var(--accent)">${IC.book}</span>
+      API para desarrolladores
+    </h2>
+    <p style="font-size:13px;color:var(--text-secondary);line-height:1.7;margin-bottom:16px">
+      Esta plataforma expone una REST API completa para que conectes tu propia aplicación. Puedes subir archivos, listarlos, descargarlos y eliminarlos desde cualquier lenguaje de programación usando los endpoints que configuraste aquí arriba. La documentación incluye ejemplos de código en Node.js, Python, Java y cURL, y está disponible en español, inglés y portugués.
+    </p>
+    <a href="/api/docs" target="_blank" class="btn btn-primary" style="width:100%;justify-content:center">
+      ${IC.book} Ver documentación de la API
+    </a>
+  </div>
+
   <button class="btn btn-primary btn-block" id="saveBtn" style="margin-top:20px;padding:12px 16px;font-size:15px" onclick="saveConfig()">
     ${IC.check} Guardar y empezar
   </button>
