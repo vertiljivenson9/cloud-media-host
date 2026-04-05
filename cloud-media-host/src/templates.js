@@ -43,6 +43,7 @@ const IC = {
   hardDrive: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="12" x2="2" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" y1="16" x2="6.01" y2="16"/><line x1="10" y1="16" x2="10.01" y2="16"/></svg>`,
   globe: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>`,
   chevronRight: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>`,
+  chevronLeft: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>`,
   refreshCw: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>`,
 };
 
@@ -855,7 +856,7 @@ ${BASE_CSS}
 </head>
 <body>
 <div class="docs">
-  <a href="/" class="back-link">${IC.chevronRight.replace('path','path transform="rotate(180deg)"')} Back to dashboard</a>
+  <a href="/" class="back-link">${IC.chevronLeft} Back to dashboard</a>
 
   <div class="docs-header">
     <div>
@@ -1229,7 +1230,7 @@ function setLang(lang) {
   document.getElementById('t-note').innerHTML = t.note;
   document.getElementById('t-streaming-title').textContent = t.streamingTitle;
   document.getElementById('t-streaming-text').textContent = t.streamingText;
-  document.querySelector('.back-link').innerHTML = '${IC.chevronRight.replace("path","path transform=\\"rotate(180deg)\\"")} ' + t.back;
+  document.querySelector('.back-link').innerHTML = '${IC.chevronLeft} ' + t.back;
   localStorage.setItem('cmh_lang', lang);
 }
 
