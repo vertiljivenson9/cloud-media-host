@@ -42,6 +42,7 @@ CREATE INDEX IF NOT EXISTS idx_folders_drive_id ON folders(drive_folder_id);
 CREATE TABLE IF NOT EXISTS files (
   id TEXT PRIMARY KEY DEFAULT substr(md5(random()::text || clock_timestamp()::text), 1, 12),
   name TEXT NOT NULL,
+  original_name TEXT,  -- Original file name (before folder path prefix)
   type TEXT NOT NULL DEFAULT 'application/octet-stream',
   size BIGINT NOT NULL DEFAULT 0,
   size_display TEXT,
@@ -55,9 +56,15 @@ CREATE TABLE IF NOT EXISTS files (
   thumbnail_url TEXT,
   stream_url TEXT,
   folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL,  -- Carpeta a la que pertenece
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  date_display TEXT GENERATED ALWAYS AS (to_char(created_at AT TIME ZONE 'America/Santo_Domingo', 'DD/MM/YYYY')) STORED
+  created_at TIMESTAMPTZ DEFAULT NOW()
+  -- date_display removed: use to_char(created_at, 'DD/MM/YYYY') in queries instead
+  -- Previous GENERATED ALWAYS column caused INSERT errors via PostgREST API
 );
+
+-- Helper function to get formatted date (replaces generated column)
+CREATE OR REPLACE FUNCTION get_date_display() RETURNS TEXT AS $$
+  SELECT to_char(NOW() AT TIME ZONE 'America/Santo_Domingo', 'DD/MM/YYYY');
+$$ LANGUAGE sql STABLE;
 
 -- Indices para consultas frecuentes
 CREATE INDEX IF NOT EXISTS idx_files_folder_id ON files(folder_id);
@@ -119,3 +126,13 @@ CREATE TRIGGER config_updated_at
 -- Ejecuta esto para verificar que todo se creo bien:
 -- SELECT tablename FROM pg_tables WHERE schemaname = 'public';
 -- Deberia mostrar: app_config, folders, files
+
+
+-- ============================================
+-- MIGRACION (ejecutar si ya tenias el schema anterior)
+-- ============================================
+-- Ejecutar ESTO en Supabase SQL Editor si ya tenias la BD creada:
+--
+-- ALTER TABLE files ADD COLUMN IF NOT EXISTS original_name TEXT;
+-- ALTER TABLE files DROP COLUMN IF EXISTS date_display;
+-- ============================================

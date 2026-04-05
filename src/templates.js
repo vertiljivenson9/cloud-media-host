@@ -704,10 +704,16 @@ ${BASE_CSS}
   window.extractFolderId = function(input) {
     var s = (input || '').trim();
     if (!s) return '';
-    var m = s.match(/folders\\/([a-zA-Z0-9_-]{10,})/);
+    // Try to extract ID from Google Drive folder URL
+    var m = s.match(/folders\/([a-zA-Z0-9_-]{10,})/);
     if (m) return m[1];
+    // Also try open?id= format
+    var m2 = s.match(/[?&]id=([a-zA-Z0-9_-]{10,})/);
+    if (m2) return m2[1];
+    // If it looks like a raw ID, return it
     if (/^[a-zA-Z0-9_-]{10,}$/.test(s)) return s;
-    return s;
+    // Invalid format — return empty to trigger validation error
+    return '';
   };
 
   window.copyApiUrl = function(text) {
@@ -754,7 +760,7 @@ ${BASE_CSS}
       var existingId = entry.dataset.folderId || '';
       if (!name && !rawId) return;
       if (!name) { folderError = 'Cada carpeta necesita un nombre'; return; }
-      if (!folderId || !/^[a-zA-Z0-9_-]{10,}$/.test(folderId)) { folderError = 'ID de carpeta invalido para "' + name + '"'; return; }
+      if (!folderId) { folderError = 'ID de carpeta invalido para "' + name + '". Pega el enlace completo de Google Drive.'; return; }
       var folderObj = { name: name, drive_folder_id: folderId };
       if (existingId) folderObj.id = existingId;
       folders.push(folderObj);
@@ -814,7 +820,7 @@ export function dashboardPage(config, files = [], folders = []) {
         </div>
         <div class="file-info">
           <div class="file-name">${escapeHtml(f.name)}</div>
-          <div class="file-meta">${f.size_display||'?'} &middot; ${(f.type_display||'?').toLowerCase()} &middot; ${f.date_display||'?'}</div>
+          <div class="file-meta">${f.size_display||'?'} &middot; ${(f.type_display||'?').toLowerCase()} &middot; ${f.created_at ? new Date(f.created_at).toLocaleDateString('es') : (f.date_display||'?')}</div>
         </div>
         <div class="file-actions">
           <button class="btn-icon-only" onclick="copyUrl('${f.download_url||''}')" title="Copiar enlace">${IC.copy}</button>
@@ -1046,9 +1052,14 @@ ${BASE_CSS}
 <main class="app-main">
   <div class="upload-zone" id="dropZone">
     <div class="uz-icon">${IC.upload}</div>
-    <p>Suelta archivos aqui o haz click para seleccionar</p>
-    <p class="uz-hint">MP3 &middot; MP4 &middot; ZIP &middot; PNG &middot; JPG</p>
-    <input type="file" id="fileInput" multiple accept=".mp3,.mp4,.zip,.rar,.7z,.jpg,.jpeg,.png,.gif,.webp,.wav,.ogg,.aac,.webm">
+    <p>Suelta archivos o carpetas aqui o haz click para seleccionar</p>
+    <p class="uz-hint">MP3 &middot; MP4 &middot; ZIP &middot; PNG &middot; JPG &middot; Carpetas</p>
+    <input type="file" id="fileInput" multiple accept=".mp3,.mp4,.zip,.rar,.7z,.jpg,.jpeg,.png,.gif,.webp,.wav,.ogg,.aac,.webm" style="display:none">
+    <input type="file" id="folderInput" webkitdirectory multiple accept=".mp3,.mp4,.zip,.rar,.7z,.jpg,.jpeg,.png,.gif,.webp,.wav,.ogg,.aac,.webm" style="display:none">
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:center">
+      <button type="button" class="btn btn-ghost" onclick="document.getElementById('fileInput').click()" style="font-size:12px;padding:6px 12px">Seleccionar archivos</button>
+      <button type="button" class="btn btn-ghost" onclick="document.getElementById('folderInput').click()" style="font-size:12px;padding:6px 12px">Seleccionar carpeta</button>
+    </div>
   </div>
 
   <div class="progress-wrap" id="progressWrap">
@@ -1288,11 +1299,23 @@ function filterFilesByFolder() {
 // ============ UPLOAD ============
 const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
-dropZone.addEventListener('click', () => fileInput.click());
-dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
-dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('dragover'); if(e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files); });
+const folderInput = document.getElementById('folderInput');
+
+// Click on dropzone opens file input (not folder)
+dropZone.addEventListener('click', (e) => {
+  // Don't trigger if clicking on buttons inside the dropzone
+  if (e.target.tagName === 'BUTTON') return;
+  fileInput.click();
+});
+dropZone.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', e => { e.preventDefault(); e.stopPropagation(); dropZone.classList.remove('dragover'); });
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); e.stopPropagation();
+  dropZone.classList.remove('dragover');
+  if(e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
+});
 fileInput.addEventListener('change', () => { if(fileInput.files.length) uploadFiles(fileInput.files); });
+folderInput.addEventListener('change', () => { if(folderInput.files.length) uploadFiles(folderInput.files); });
 
 function uploadFiles(files) {
   const pw = document.getElementById('progressWrap');

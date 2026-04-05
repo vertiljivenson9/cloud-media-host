@@ -688,7 +688,7 @@ async function handleDebug(request, env) {
         drive_id: testId,
         download_url: 'https://example.com',
         embed_url: 'https://example.com',
-        date_display: new Date().toLocaleDateString('es'),
+        // date_display is GENERATED ALWAYS — do NOT include in INSERT
       });
     } catch (insertErr) {
       results.insert_test = { success: false, error: insertErr.message, step: 'insert' };
@@ -776,10 +776,14 @@ async function handleUpload(request, env, url) {
   const contentType = file.type || 'application/octet-stream';
   console.log('Upload:', fileName, contentType);
 
-  // Step 2: Validate file type and size
+  // Step 2: Validate file type and size (skip for directory uploads)
   if (!isAllowedType(contentType)) {
     return json({ success: false, error: `Tipo no permitido: ${contentType}`, step: 2, detail: 'Usa MP3, MP4, ZIP o imágenes.' }, 400);
   }
+
+  // Extract relative path for folder uploads (webkitRelativePath)
+  const relativePath = file.webkitRelativePath || null;
+
 
   let fileData;
   try {
@@ -843,9 +847,11 @@ async function handleUpload(request, env, url) {
     return json({ success: false, error: 'Google Drive no devolvió ID de archivo', step: 4, detail: `Respuesta de Drive: ${JSON.stringify(driveResult || {})}` }, 500);
   }
 
-  // Build file record
+  // Build file record — use relative path as display name if from folder upload
+  const displayName = relativePath || fileName;
   const fileRecord = {
-    name: fileName,
+    name: displayName,
+    original_name: fileName,
     type: contentType,
     size: fileData.byteLength || driveResult.size || 0,
     size_display: formatSize(fileData.byteLength || driveResult.size || 0),
@@ -854,7 +860,7 @@ async function handleUpload(request, env, url) {
     drive_id: driveResult.id,
     download_url: driveResult.downloadUrl,
     embed_url: getEmbedUrl(driveResult.id),
-    date_display: new Date().toLocaleDateString('es'),
+    // date_display is GENERATED ALWAYS in Supabase — auto-calculated, do NOT insert
   };
 
   if (folderId) fileRecord.folder_id = folderId;
