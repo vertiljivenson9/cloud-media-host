@@ -1,0 +1,30 @@
+# ============================================
+# CONFIGURACIÓN - Copia este archivo como .dev.vars
+# ============================================
+
+# --- GOOGLE DRIVE API ---
+# 1. Ve a https://console.cloud.google.com
+# 2. Crea un proyecto o selecciona uno existente
+# 3. Habilita "Google Drive API"
+# 4. Ve a "Credenciales" > "Crear credenciales" > "Cuenta de servicio"
+# 5. Crea una clave JSON y copia el contenido aquí
+GOOGLE_SERVICE_ACCOUNT_JSON='{"type":"service_account","project_id":"...","private_key_id":"...","private_key":"...","client_email":"...","client_id":"...","auth_uri":"...","token_uri":"..."}'
+
+# ID de la carpeta de Google Drive donde se guardan los archivos
+# Comparte esta carpeta con el email de la cuenta de servicio
+GOOGLE_DRIVE_FOLDER_ID="TU_FOLDER_ID_AQUI"
+
+# --- CLOUDINARY ---
+# 1. Ve a https://cloudinary.com/users/register_free
+# 2. Crea una cuenta gratuita
+# 3. Ve a Dashboard para obtener estos valores
+# 4. En Settings > Upload > Upload presets > agrega "unsigned" preset
+CLOUDINARY_CLOUD_NAME="tu_cloud_name"
+CLOUDINARY_API_KEY="tu_api_key"
+CLOUDINARY_API_SECRET="tu_api_secret"
+CLOUDINARY_UPLOAD_PRESET="unsigned_upload_preset_name"
+
+# --- SEGURIDAD (opcional) ---
+# Clave secreta para proteger las operaciones de escritura (upload/delete)
+# Si no la configuras, cualquiera podrá subir archivos
+API_SECRET_KEY="cambia_esto_por_algo_seguro_123"
