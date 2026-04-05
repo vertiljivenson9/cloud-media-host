@@ -4,12 +4,13 @@ compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
 
 # Cloudflare KV - Base de datos de archivos
+# Cuando conectes el repo a Cloudflare, crea el KV namespace primero
+# y reemplaza el ID abajo, o usa la variable de entorno KV_MEDIA_KV_ID
 [[kv_namespaces]]
 binding = "MEDIA_KV"
-id = "TU_KV_NAMESPACE_ID_AQUI"
+id = "${KV_MEDIA_KV_ID}"
 
-# Variables de entorno (secrets van en .dev.vars)
+# Variables de entorno
 [vars]
 ENVIRONMENT = "production"
-MAX_FILE_SIZE = "104857600" # 100MB
-ALLOWED_TYPES = "audio/mpeg,video/mp4,application/zip,application/x-zip-compressed"
+MAX_FILE_SIZE = "104857600"
