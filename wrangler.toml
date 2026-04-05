@@ -10,6 +10,6 @@ MAX_FILE_SIZE = "104857600"
 SUPABASE_URL = "https://akqxnrwgzbweiwmubecw.supabase.co"
 SUPABASE_SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFrcXhucndnemJ3ZWl3bXViZWN3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTM4NzYzMywiZXhwIjoyMDkwOTYzNjMzfQ.wjwSfpuqZAknxEZGC3OP33daCF0vR7Et5K7yfE3iz-M"
 
-# Firebase Authentication (opcional - agregar tus valores reales)
-# FIREBASE_PROJECT_ID = "tu-firebase-project-id"
-# FIREBASE_API_KEY = "AIzaSy..."
+# Firebase Authentication
+FIREBASE_PROJECT_ID = "cloud-media-a2e1f"
+FIREBASE_API_KEY = "AIzaSyDcSe4n7pzazgKMPmy09HVkLOmAjF46ogM"

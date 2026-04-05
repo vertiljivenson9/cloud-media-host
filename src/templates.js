@@ -552,7 +552,15 @@ ${BASE_CSS}
     btn.addEventListener('click', function() {
       if (window.__firebaseAuth) {
         var provider = new firebase.auth.GoogleAuthProvider();
-        window.__firebaseAuth.signInWithPopup(provider).catch(function(e) {
+        provider.addScope('https://www.googleapis.com/auth/drive');
+        window.__firebaseAuth.signInWithPopup(provider).then(function(result) {
+          // Capture Google OAuth access token for Drive uploads
+          if (result.credential && result.credential.accessToken) {
+            window.__googleAccessToken = result.credential.accessToken;
+            console.log('Google Drive access token obtained after sign-in');
+          }
+          setTimeout(function() { location.reload(); }, 500);
+        }).catch(function(e) {
           if (e.code !== 'auth/popup-closed-by-user') {
             alert('Error al iniciar sesion: ' + e.message);
           }
@@ -1423,7 +1431,19 @@ ${authState?.firebaseConfigured && !authState?.user ? `
   btn.addEventListener('click', function() {
     if (window.__firebaseAuth) {
       var provider = new firebase.auth.GoogleAuthProvider();
-      window.__firebaseAuth.signInWithPopup(provider).catch(function(e) {
+      provider.addScope('https://www.googleapis.com/auth/drive');
+      window.__firebaseAuth.signInWithPopup(provider).then(function(result) {
+        // Capture Google OAuth access token for Drive uploads
+        if (result.credential && result.credential.accessToken) {
+          window.__googleAccessToken = result.credential.accessToken;
+          console.log('Google Drive access token obtained after sign-in');
+        }
+        if (result.additionalUserInfo && result.additionalUserInfo.profile) {
+          window.__googleUserEmail = result.additionalUserInfo.profile.email;
+          window.__googleUserName = result.additionalUserInfo.profile.name;
+        }
+        setTimeout(function() { location.reload(); }, 500);
+      }).catch(function(e) {
         if (e.code !== 'auth/popup-closed-by-user') {
           alert('Error al iniciar sesion: ' + e.message);
         }
@@ -1738,6 +1758,15 @@ function uploadFiles(files) {
 
     const xhr = new XMLHttpRequest();
     xhr.open('POST', uploadUrl, true);
+
+    // Send Google OAuth access token if available (from Firebase Auth + Google Sign-In)
+    if (window.__googleAccessToken) {
+      xhr.setRequestHeader('X-Google-Access-Token', window.__googleAccessToken);
+    }
+    // Also send Firebase ID token for admin verification
+    if (window.__firebaseToken) {
+      xhr.setRequestHeader('Authorization', 'Bearer ' + window.__firebaseToken);
+    }
 
     xhr.upload.addEventListener('progress', function(e) {
       if (e.lengthComputable) {

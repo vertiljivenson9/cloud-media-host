@@ -134,10 +134,17 @@ export async function getDriveAccessToken(config) {
  * @param {string} fileName - Name for the file in Drive
  * @param {string} contentType - MIME type
  * @param {ArrayBuffer} fileData - File bytes
+ * @param {string} [accessToken] - Optional pre-existing Google OAuth access token (e.g. from Firebase Auth)
  * @returns {Promise<{id, name, mimeType, size, webViewLink, downloadUrl}>}
  */
-export async function uploadFile(config, folderId, fileName, contentType, fileData) {
-  const { token } = await getDriveAccessToken(config);
+export async function uploadFile(config, folderId, fileName, contentType, fileData, accessToken = null) {
+  let token;
+  if (accessToken) {
+    token = accessToken;
+  } else {
+    const result = await getDriveAccessToken(config);
+    token = result.token;
+  }
 
   // Step 1: Initiate resumable upload
   const initResponse = await fetch(
@@ -251,9 +258,18 @@ export function getEmbedUrl(driveFileId) {
 /**
  * Delete a file from Google Drive
  * Works with both OAuth2 and Service Account auth.
+ * @param {object} config - App config
+ * @param {string} driveFileId - Drive file ID to delete
+ * @param {string} [accessToken] - Optional pre-existing Google OAuth access token
  */
-export async function deleteFile(config, driveFileId) {
-  const { token } = await getDriveAccessToken(config);
+export async function deleteFile(config, driveFileId, accessToken = null) {
+  let token;
+  if (accessToken) {
+    token = accessToken;
+  } else {
+    const result = await getDriveAccessToken(config);
+    token = result.token;
+  }
 
   const response = await fetch(
     `${DRIVE_API}/files/${driveFileId}`,
@@ -273,9 +289,18 @@ export async function deleteFile(config, driveFileId) {
 
 /**
  * Get file info from Google Drive
+ * @param {object} config - App config
+ * @param {string} driveFileId - Drive file ID
+ * @param {string} [accessToken] - Optional pre-existing Google OAuth access token
  */
-export async function getFileInfo(config, driveFileId) {
-  const { token } = await getDriveAccessToken(config);
+export async function getFileInfo(config, driveFileId, accessToken = null) {
+  let token;
+  if (accessToken) {
+    token = accessToken;
+  } else {
+    const result = await getDriveAccessToken(config);
+    token = result.token;
+  }
 
   const response = await fetch(
     `${DRIVE_API}/files/${driveFileId}?fields=id,name,size,mimeType,createdTime`,
@@ -293,9 +318,18 @@ export async function getFileInfo(config, driveFileId) {
 
 /**
  * List files in a folder (used for sync/verification)
+ * @param {object} config - App config
+ * @param {string} folderId - Drive folder ID
+ * @param {string} [accessToken] - Optional pre-existing Google OAuth access token
  */
-export async function listFiles(config, folderId) {
-  const { token } = await getDriveAccessToken(config);
+export async function listFiles(config, folderId, accessToken = null) {
+  let token;
+  if (accessToken) {
+    token = accessToken;
+  } else {
+    const result = await getDriveAccessToken(config);
+    token = result.token;
+  }
 
   const response = await fetch(
     `${DRIVE_API}/files?q='${folderId}'+in+parents&fields=files(id,name,size,mimeType,createdTime)&pageSize=100`,
@@ -315,9 +349,19 @@ export async function listFiles(config, folderId) {
 
 /**
  * Create a folder in Google Drive inside a parent folder
+ * @param {object} config - App config
+ * @param {string} parentFolderId - Parent Drive folder ID
+ * @param {string} folderName - Name for new folder
+ * @param {string} [accessToken] - Optional pre-existing Google OAuth access token
  */
-export async function createFolder(config, parentFolderId, folderName) {
-  const { token } = await getDriveAccessToken(config);
+export async function createFolder(config, parentFolderId, folderName, accessToken = null) {
+  let token;
+  if (accessToken) {
+    token = accessToken;
+  } else {
+    const result = await getDriveAccessToken(config);
+    token = result.token;
+  }
 
   const response = await fetch(`${DRIVE_API}/files`, {
     method: 'POST',
@@ -347,9 +391,18 @@ export async function createFolder(config, parentFolderId, folderName) {
 
 /**
  * Delete a folder from Google Drive (by ID)
+ * @param {object} config - App config
+ * @param {string} driveFolderId - Drive folder ID to delete
+ * @param {string} [accessToken] - Optional pre-existing Google OAuth access token
  */
-export async function deleteFolder(config, driveFolderId) {
-  const { token } = await getDriveAccessToken(config);
+export async function deleteFolder(config, driveFolderId, accessToken = null) {
+  let token;
+  if (accessToken) {
+    token = accessToken;
+  } else {
+    const result = await getDriveAccessToken(config);
+    token = result.token;
+  }
 
   const response = await fetch(
     `${DRIVE_API}/files/${driveFolderId}`,

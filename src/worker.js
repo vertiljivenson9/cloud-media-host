@@ -39,7 +39,7 @@ import { verifyFirebaseToken, extractFirebaseToken, authenticateRequest } from '
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, X-Admin-Key, X-Folder-ID, Authorization, X-Firebase-Auth'
+  'Access-Control-Allow-Headers': 'Content-Type, X-Admin-Key, X-Folder-ID, Authorization, X-Firebase-Auth, X-Google-Access-Token'
 };
 
 export default {
@@ -257,7 +257,7 @@ async function handleIndex(request, env) {
     return html(setupPage(null, { firebaseConfigured, user }));
   }
 
-  if (!config || !config.drive_credentials) {
+  if (!config || (!config.drive_credentials && !config.oauth2_refresh_token && !firebaseConfigured)) {
     return html(setupPage(config, { firebaseConfigured, user }));
   }
 
@@ -333,11 +333,12 @@ async function handleStatus(request, env) {
     try { folderCount = await db.count('folders'); } catch (e) { /* table might not exist */ }
 
     return json({
-      configured: !!(config && config.drive_credentials),
+      configured: !!(config && (config.drive_credentials || config.oauth2_refresh_token)),
       database: 'supabase',
       services: {
-        drive: !!(config?.drive_credentials),
-        cloudinary: !!(config?.cloudinary_cloud_name)
+        drive: !!(config?.drive_credentials || config?.oauth2_refresh_token),
+        cloudinary: !!(config?.cloudinary_cloud_name),
+        firebase: !!(env.FIREBASE_PROJECT_ID)
       },
       file_count: fileCount,
       folder_count: folderCount,
@@ -358,17 +359,20 @@ async function handleSaveConfig(request, env) {
     // Get existing config FIRST
     const existingConfig = await getConfig(env);
 
-    // Validate credentials - accept either OAuth2 or Service Account
+    // Validate credentials - accept OAuth2, Service Account, or Firebase Auth (Google Sign-In)
     const credentials = drive_credentials || existingConfig?.drive_credentials;
     const hasOAuth2 = !!(oauth2_client_id || existingConfig?.oauth2_client_id);
-    if (!credentials && !hasOAuth2) {
-      return json({ success: false, error: 'Se necesita OAuth2 o Service Account credentials' }, 400);
+    const hasFirebase = !!env.FIREBASE_PROJECT_ID;
+    if (!credentials && !hasOAuth2 && !hasFirebase) {
+      return json({ success: false, error: 'Se necesita OAuth2, Service Account, o Firebase Auth credentials' }, 400);
     }
 
     // Build folder list from request
     const folderList = folders || [];
 
-    if (folderList.length === 0 && !existingConfig) {
+    // Firebase Auth is sufficient for auth - don't require drive creds or OAuth2
+    const hasFirebase = !!env.FIREBASE_PROJECT_ID;
+    if (folderList.length === 0 && !existingConfig && !hasFirebase) {
       return json({ success: false, error: 'Agrega al menos una carpeta de Google Drive' }, 400);
     }
 
@@ -1000,8 +1004,19 @@ async function handleUpload(request, env, url) {
     return json({ success: false, error: 'Error al leer configuración', step: 1, detail: e.message }, 500);
   }
 
-  if (!config || !config.drive_credentials) {
-    return json({ success: false, error: 'App no configurada', step: 1, detail: 'No hay credenciales de Google Drive guardadas en la base de datos.' }, 400);
+  if (!config) {
+    return json({ success: false, error: 'App no configurada', step: 1, detail: 'No se pudo leer la configuracion de la base de datos.' }, 400);
+  }
+
+  // Accept Google OAuth access token from frontend (via Firebase Auth + Google Sign-In)
+  const googleAccessToken = request.headers.get('X-Google-Access-Token') || null;
+  
+  // Check if we have ANY valid auth method
+  const hasCreds = !!(config.drive_credentials);
+  const hasOAuth2 = !!(config.oauth2_client_id && config.oauth2_refresh_token);
+  const hasFirebaseToken = !!googleAccessToken;
+  if (!hasCreds && !hasOAuth2 && !hasFirebaseToken) {
+    return json({ success: false, error: 'Sin credenciales de Drive', step: 1, detail: 'Configura OAuth2, Service Account, o inicia sesion con Google para subir archivos.' }, 400);
   }
 
   // Parse form data
@@ -1081,7 +1096,7 @@ async function handleUpload(request, env, url) {
   let driveResult;
   try {
     driveResult = await uploadFile(
-      config, targetDriveFolderId, fileName, contentType, fileData
+      config, targetDriveFolderId, fileName, contentType, fileData, googleAccessToken
     );
     console.log('Drive OK:', driveResult.id);
   } catch (e) {
