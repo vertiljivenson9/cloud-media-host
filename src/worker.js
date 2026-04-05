@@ -146,6 +146,9 @@ function isApiRequest(request) {
 }
 
 function getDb(env) {
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_KEY) {
+    throw new Error('Supabase no configurado. Agrega SUPABASE_URL y SUPABASE_SERVICE_KEY en wrangler.toml o como secrets en Cloudflare.');
+  }
   return createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY);
 }
 
@@ -171,14 +174,29 @@ async function verifyAdmin(request, env) {
 async function handleIndex(request, env) {
   if (isApiRequest(request)) return handleStatus(request, env);
 
-  const db = getDb(env);
-  const config = await getConfig(env);
+  let config = null;
+  try {
+    config = await getConfig(env);
+  } catch (e) {
+    // Supabase not configured yet — show setup page
+    console.error('getConfig error:', e.message);
+    return html(setupPage());
+  }
 
   if (!config || !config.drive_credentials) {
     return html(setupPage());
   }
 
-  const folders = await db.select('folders', '*', { order: 'created_at.desc' });
+  const db = getDb(env);
+  let folders = [];
+  let files = [];
+  try {
+    folders = await db.select('folders', '*', { order: 'created_at.desc' });
+    files = await db.select('files', '*', { order: 'created_at.desc' });
+  } catch (e) {
+    console.error('DB query error:', e.message);
+  }
+
   if (folders.length === 0) {
     config.folders = [];
     return html(setupPage(config));
@@ -193,7 +211,6 @@ async function handleIndex(request, env) {
     created_at: f.created_at,
   }));
 
-  const files = await db.select('files', '*', { order: 'created_at.desc' });
   files.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   return html(dashboardPage(config, files, folders));
@@ -203,18 +220,22 @@ async function handleIndex(request, env) {
 async function handleSetup(request, env) {
   if (isApiRequest(request)) return handleStatus(request, env);
 
-  const db = getDb(env);
-  const config = await getConfig(env);
-
-  if (config) {
-    const folders = await db.select('folders', '*', { order: 'created_at.desc' });
-    config.folders = folders.map(f => ({
-      id: f.id,
-      name: f.name,
-      drive_folder_id: f.drive_folder_id,
-      drive_link: f.drive_link,
-      created_at: f.created_at,
-    }));
+  let config = null;
+  try {
+    config = await getConfig(env);
+    if (config) {
+      const db = getDb(env);
+      const folders = await db.select('folders', '*', { order: 'created_at.desc' });
+      config.folders = folders.map(f => ({
+        id: f.id,
+        name: f.name,
+        drive_folder_id: f.drive_folder_id,
+        drive_link: f.drive_link,
+        created_at: f.created_at,
+      }));
+    }
+  } catch (e) {
+    console.error('handleSetup error:', e.message);
   }
 
   return html(setupPage(config));
