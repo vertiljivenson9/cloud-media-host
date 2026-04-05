@@ -1247,18 +1247,36 @@ ${BASE_CSS}
   var auth = firebase.auth();
   auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
 
+  // Flag to prevent double redirects (signInWithPopup + onAuthStateChanged race)
+  var _redirecting = false;
+
   // Helper: set session cookie and redirect
+  // Verifies with server BEFORE redirecting to prevent infinite loops
   function setSessionAndRedirect(user) {
-    user.getIdToken().then(function(token) {
-      document.cookie = '__session=' + token + '; path=/; max-age=3600; SameSite=Strict';
-      window.location.href = '/';
+    if (_redirecting) return;
+    _redirecting = true;
+    user.getIdToken(true).then(function(token) {
+      document.cookie = '__session=' + token + '; path=/; max-age=3600; SameSite=Lax';
+      // Verify token with server before redirecting to break potential loops
+      return fetch('/api/auth/me', {
+        headers: { 'Authorization': 'Bearer ' + token }
+      }).then(function(r) { return r.json(); }).then(function(data) {
+        if (data.authenticated) {
+          window.location.replace('/');
+        } else {
+          // Server rejected the token — don't redirect to prevent loop
+          _redirecting = false;
+        }
+      });
+    }).catch(function(err) {
+      _redirecting = false;
+      console.error('Auth redirect error:', err);
     });
   }
 
-  // Check if already logged in
+  // Check if already logged in (only on initial state change)
   auth.onAuthStateChanged(function(user) {
-    if (user) {
-      // Already authenticated, set cookie and redirect to dashboard
+    if (user && !_redirecting) {
       setSessionAndRedirect(user);
     }
   });
