@@ -1,0 +1,19 @@
+{
+  "name": "cloud-media-host",
+  "version": "1.0.0",
+  "description": "Free media hosting on Cloudflare using Google Drive + Cloudinary. No VPS needed.",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "kv:create": "wrangler kv:namespace create MEDIA_KV",
+    "kv:put": "wrangler kv:key put",
+    "kv:get": "wrangler kv:key get",
+    "kv:list": "wrangler kv:key list",
+    "kv:delete": "wrangler kv:key delete"
+  },
+  "devDependencies": {
+    "wrangler": "^3.99.0"
+  }
+}
