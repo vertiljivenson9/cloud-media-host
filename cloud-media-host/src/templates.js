@@ -712,22 +712,64 @@ dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover
 dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('dragover'); if(e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files); });
 fileInput.addEventListener('change', () => { if(fileInput.files.length) uploadFiles(fileInput.files); });
 
-async function uploadFiles(files) {
+function uploadFiles(files) {
   const pw = document.getElementById('progressWrap');
   const fill = document.getElementById('progressFill');
   const label = document.getElementById('progressLabel');
   pw.classList.add('active');
-  for(let i=0;i<files.length;i++){
-    label.textContent = 'Subiendo ' + files[i].name + ' (' + (i+1) + '/' + files.length + ')';
-    fill.style.width = ((i/files.length)*100)+'%';
-    const fd = new FormData(); fd.append('file', files[i]);
-    try { const r = await fetch('/api/upload',{method:'POST',body:fd}); const d = await r.json(); if(!d.success) toast(d.error||'Error','error'); }
-    catch(e) { toast('Error subiendo ' + files[i].name,'error'); }
+
+  let fileIndex = 0;
+  let loaded = 0;
+  let total = 0;
+
+  function uploadNext() {
+    if (fileIndex >= files.length) {
+      label.textContent = 'Completado';
+      fill.style.width = '100%';
+      setTimeout(() => location.reload(), 800);
+      return;
+    }
+
+    const file = files[fileIndex];
+    const fd = new FormData();
+    fd.append('file', file);
+
+    label.textContent = 'Subiendo ' + file.name + ' (' + (fileIndex + 1) + '/' + files.length + ')';
+    loaded = 0;
+    total = file.size;
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/upload', true);
+
+    xhr.upload.addEventListener('progress', function(e) {
+      if (e.lengthComputable) {
+        loaded = e.loaded;
+        total = e.total;
+        const pct = Math.round((e.loaded / e.total) * 100);
+        fill.style.width = pct + '%';
+        label.textContent = 'Subiendo ' + file.name + ' — ' + pct + '%';
+      }
+    });
+
+    xhr.addEventListener('load', function() {
+      try {
+        const d = JSON.parse(xhr.responseText);
+        if (!d.success) toast(d.error || 'Error al subir', 'error');
+      } catch(e) { toast('Error de respuesta', 'error'); }
+      fileIndex++;
+      uploadNext();
+    });
+
+    xhr.addEventListener('error', function() {
+      toast('Error subiendo ' + file.name, 'error');
+      fileIndex++;
+      uploadNext();
+    });
+
+    xhr.send(fd);
   }
-  label.textContent = 'Completado';
-  fill.style.width = '100%';
-  setTimeout(() => { pw.classList.remove('active'); fill.style.width='0'; }, 2000);
-  location.reload();
+
+  uploadNext();
 }
 
 function copyUrl(url) { if(!url){toast('Sin URL','error');return;} navigator.clipboard.writeText(url).then(()=>toast('Enlace copiado al portapapeles','success')); }
