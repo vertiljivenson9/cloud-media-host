@@ -47,6 +47,7 @@ export default {
 
       switch (route.pattern) {
         case '/': return handleIndex(request, env);
+        case '/setup': return handleSetup(request, env);
         case '/api/docs': return handleApiDocs(request, env, url);
         case '/api/status': return handleStatus(request, env);
         case '/api/config':
@@ -94,7 +95,7 @@ export default {
 // ============================================
 function matchRoute(path) {
   // Exact routes first
-  const exact = ['/', '/api/docs', '/api/status', '/api/config', '/api/upload', '/api/files', '/api/folders'];
+  const exact = ['/', '/setup', '/api/docs', '/api/status', '/api/config', '/api/upload', '/api/files', '/api/folders'];
   for (const p of exact) {
     if (path === p) return { pattern: p, params: {} };
   }
@@ -214,6 +215,17 @@ async function handleIndex(request, env) {
   return html(dashboardPage(config, files, folders));
 }
 
+// GET /setup — Setup / Configuration page (accessible even when configured)
+async function handleSetup(request, env) {
+  if (isApiRequest(request)) {
+    return handleStatus(request, env);
+  }
+
+  const config = await getConfig(env);
+  // Always show setup page with existing config preloaded (if any)
+  return html(setupPage(config));
+}
+
 // GET /api/docs — API documentation
 async function handleApiDocs(request, env, url) {
   const baseUrl = `${url.protocol}//${url.host}`;
@@ -247,7 +259,9 @@ async function handleSaveConfig(request, env) {
     // Support both old format (single drive_folder_id) and new format (folders array)
     const folderList = folders || (drive_folder_id ? [{ name: 'Principal', drive_folder_id }] : []);
 
-    if (!drive_credentials) {
+    // If no credentials sent but existing config has them, keep existing (partial update)
+    const credentials = drive_credentials || existingConfig?.drive_credentials;
+    if (!credentials) {
       return json({ success: false, error: 'Google Drive credentials son obligatorios' }, 400);
     }
 
@@ -256,7 +270,7 @@ async function handleSaveConfig(request, env) {
     }
 
     // Validate service account format
-    if (!drive_credentials.client_email || !drive_credentials.private_key) {
+    if (!credentials.client_email || !credentials.private_key) {
       return json({ success: false, error: 'Service Account JSON inválido (faltan client_email o private_key)' }, 400);
     }
 
@@ -271,17 +285,25 @@ async function handleSaveConfig(request, env) {
 
     // Build config object (store credentials but hash the password)
     const config = {
-      drive_credentials: drive_credentials,
+      drive_credentials: credentials,
       drive_folder_id: folderList[0].drive_folder_id, // Backward compat: first folder as default
       folders: folderList,
-      admin_password_hash: admin_password ? await hashPassword(admin_password) : null,
+      admin_password_hash: admin_password ? await hashPassword(admin_password) : (existingConfig?.admin_password_hash || null),
       created_at: new Date().toISOString()
     };
 
-    // Optional: Cloudinary
+    // Optional: Cloudinary (keep existing if not sent)
     if (cloudinary_cloud_name && cloudinary_upload_preset) {
       config.cloudinary_cloud_name = cloudinary_cloud_name;
       config.cloudinary_upload_preset = cloudinary_upload_preset;
+    } else if (existingConfig?.cloudinary_cloud_name) {
+      config.cloudinary_cloud_name = existingConfig.cloudinary_cloud_name;
+      config.cloudinary_upload_preset = existingConfig.cloudinary_upload_preset;
+    }
+
+    // Preserve original creation date
+    if (existingConfig?.created_at) {
+      config.created_at = existingConfig.created_at;
     }
 
     // Save to KV
@@ -531,10 +553,11 @@ async function handleDeleteFolder(request, env, folderId) {
   // Update file list (remove deleted files)
   await env.MEDIA_KV.put('app:files', JSON.stringify(remainingFileIds));
 
-  // Delete the Drive folder itself
+  // Delete the Drive folder itself (only for API-created folders, not user-linked ones)
   try {
-    if (config?.drive_credentials && folderData.drive_id) {
-      await deleteDriveFolder(config.drive_credentials, folderData.drive_id);
+    const driveFolderId = folderData.drive_id; // Only API-created folders have drive_id
+    if (config?.drive_credentials && driveFolderId) {
+      await deleteDriveFolder(config.drive_credentials, driveFolderId);
     }
   } catch (e) {
     console.error(`Failed to delete Drive folder ${folderId}:`, e.message);
@@ -592,7 +615,7 @@ async function handleUpload(request, env, url) {
     let folderId = url.searchParams.get('folder_id') || formData.get('folder_id') || request.headers.get('X-Folder-ID') || null;
 
     // If a folder_id is provided, verify it exists and get the Drive folder ID
-    let targetDriveFolderId = config.drive_folder_id; // Default: root folder
+    let targetDriveFolderId = config.drive_folder_id; // Default: first linked folder
     let folderRecord = null;
 
     if (folderId) {
@@ -600,7 +623,11 @@ async function handleUpload(request, env, url) {
       if (!folderRecord) {
         return json({ success: false, error: 'Carpeta no encontrada. El folder_id no es válido.' }, 400);
       }
-      targetDriveFolderId = folderRecord.drive_id;
+      // Support both field names: drive_folder_id (setup-linked) and drive_id (API-created)
+      targetDriveFolderId = folderRecord.drive_folder_id || folderRecord.drive_id;
+      if (!targetDriveFolderId) {
+        return json({ success: false, error: 'La carpeta no tiene un ID de Google Drive asociado.' }, 400);
+      }
     }
 
     // Upload to Google Drive

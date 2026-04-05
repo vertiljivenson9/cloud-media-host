@@ -252,21 +252,86 @@ const BASE_CSS = `
 export function setupPage(existingConfig) {
   const savedFolders = existingConfig?.folders || [];
   const hasCreds = !!existingConfig?.drive_credentials;
+  const isConfigured = hasCreds && savedFolders.length > 0;
+
+  // Build folder entries HTML with API info for already-saved folders
+  const savedEntriesHtml = savedFolders.map((f, i) => {
+    const fid = f.id || '';
+    const driveFid = f.drive_folder_id || '';
+    return `
+    <div class="folder-entry ${fid ? 'has-id' : ''}" data-index="${i}" ${fid ? 'data-folder-id="'+fid+'"' : ''}>
+      <div class="folder-entry-top">
+        <input type="text" class="folder-name" placeholder="Nombre (ej: Mi app de musica)" value="${f.name || ''}">
+        <button class="btn-remove" data-remove="1" type="button" title="Quitar">${IC.x}</button>
+      </div>
+      <div class="folder-entry-bottom">
+        <input type="text" class="folder-url" placeholder="https://drive.google.com/drive/folders/... o solo el ID" value="${driveFid}">
+      </div>
+      ${fid ? `
+      <div class="folder-api-section" onclick="this.classList.toggle('expanded')">
+        <div class="folder-api-toggle">
+          <span style="color:var(--accent)">${IC.book}</span>
+          <span>API de integracion</span>
+          <span style="margin-left:auto;color:var(--text-muted);font-size:11px">▼</span>
+        </div>
+        <div class="folder-api-content">
+          <div class="folder-api-row">
+            <span class="folder-api-label">Subir archivo</span>
+            <code class="folder-api-code">POST /api/upload?folder_id=${fid}</code>
+            <button class="btn-copy-api" onclick="event.stopPropagation();copyApiUrl('POST /api/upload?folder_id=${fid}')">${IC.copy}</button>
+          </div>
+          <div class="folder-api-row">
+            <span class="folder-api-label">Listar archivos</span>
+            <code class="folder-api-code">GET /api/folders/${fid}/files</code>
+            <button class="btn-copy-api" onclick="event.stopPropagation();copyApiUrl('GET /api/folders/${fid}/files')">${IC.copy}</button>
+          </div>
+          <div class="folder-api-row">
+            <span class="folder-api-label">Eliminar carpeta</span>
+            <code class="folder-api-code">DELETE /api/folders/${fid}</code>
+            <button class="btn-copy-api" onclick="event.stopPropagation();copyApiUrl('DELETE /api/folders/${fid}')">${IC.copy}</button>
+          </div>
+          <div class="folder-api-info">
+            Para usar la API, incluye el header <code>X-Folder-ID: ${fid}</code> o envia <code>folder_id</code> como parametro. Consulta la <a href="/api/docs" target="_blank">documentacion completa</a> para mas detalles y ejemplos en multiples lenguajes.
+          </div>
+        </div>
+      </div>` : ''}
+    </div>`;
+  }).join('');
+
+  // Always show at least one empty entry if no saved folders exist
+  const folderEntriesHtml = savedEntriesHtml || `
+    <div class="folder-entry" data-index="0">
+      <div class="folder-entry-top">
+        <input type="text" class="folder-name" placeholder="Nombre (ej: Mi app de musica)" value="">
+        <button class="btn-remove" data-remove="1" type="button" title="Quitar">${IC.x}</button>
+      </div>
+      <div class="folder-entry-bottom">
+        <input type="text" class="folder-url" placeholder="https://drive.google.com/drive/folders/... o solo el ID" value="">
+      </div>
+    </div>`;
 
   return `<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Setup - Cloud Media Host</title>
+<title>${isConfigured ? 'Configuracion' : 'Setup'} - Cloud Media Host</title>
 <style>
 ${BASE_CSS}
   body { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
-  .setup-container { max-width: 600px; width: 100%; }
+  .setup-container { max-width: 640px; width: 100%; }
   .setup-logo { text-align: center; margin-bottom: 32px; }
   .setup-logo svg { color: var(--accent); margin-bottom: 12px; }
   .setup-logo h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
   .setup-logo p { color: var(--text-muted); font-size: 14px; margin-top: 4px; }
+  .back-link {
+    display: inline-flex; align-items: center; gap: 6px;
+    color: var(--text-secondary); font-size: 13px; margin-bottom: 20px;
+    cursor: pointer; transition: color var(--transition);
+    background: none; border: none; font-family: var(--font);
+    padding: 0;
+  }
+  .back-link:hover { color: var(--accent); }
   .setup-card { margin-bottom: 16px; }
   .setup-card h2 { font-size: 15px; font-weight: 600; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
   .setup-card h2 .badge { margin-left: auto; }
@@ -317,32 +382,102 @@ ${BASE_CSS}
     font-family: var(--font);
   }
   .add-folder-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-subtle); }
-  .folder-api-hint {
-    font-size: 11px; color: var(--text-muted); font-family: 'SF Mono','Fira Code',monospace;
-    background: var(--bg-surface); padding: 4px 8px; border-radius: var(--radius-sm);
-    margin-top: 2px; word-break: break-all;
+
+  /* Per-folder API section */
+  .folder-api-section {
+    margin-top: 4px; border-top: 1px solid var(--border); padding-top: 0;
+    cursor: pointer; border-radius: var(--radius-sm);
+    overflow: hidden;
   }
+  .folder-api-toggle {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 4px 4px; font-size: 12px; font-weight: 500;
+    color: var(--text-secondary); user-select: none;
+  }
+  .folder-api-toggle span:last-child {
+    transition: transform var(--transition);
+  }
+  .folder-api-section.expanded .folder-api-toggle span:last-child {
+    transform: rotate(180deg);
+  }
+  .folder-api-content {
+    max-height: 0; overflow: hidden;
+    transition: max-height 250ms ease;
+  }
+  .folder-api-section.expanded .folder-api-content {
+    max-height: 300px;
+  }
+  .folder-api-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 4px; border-bottom: 1px solid var(--border);
+  }
+  .folder-api-row:last-of-type { border-bottom: none; }
+  .folder-api-label {
+    font-size: 11px; color: var(--text-muted); min-width: 100px; flex-shrink: 0;
+  }
+  .folder-api-code {
+    flex: 1; font-size: 11px; color: var(--accent);
+    background: var(--bg-surface); padding: 3px 8px;
+    border-radius: var(--radius-sm); font-family: 'SF Mono','Fira Code',monospace;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .folder-api-info {
+    font-size: 11px; color: var(--text-muted); line-height: 1.6;
+    padding: 8px 4px 4px;
+  }
+  .folder-api-info code {
+    background: var(--bg-surface); padding: 1px 5px; border-radius: 3px;
+    color: var(--accent); font-family: 'SF Mono','Fira Code',monospace; font-size: 11px;
+  }
+  .btn-copy-api {
+    background: none; border: 1px solid var(--border); color: var(--text-muted);
+    padding: 4px 6px; border-radius: var(--radius-sm); cursor: pointer;
+    display: flex; transition: all var(--transition); flex-shrink: 0;
+  }
+  .btn-copy-api:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-subtle); }
+
+  /* Creds collapse */
+  .creds-section.is-collapsed .steps-box { display: none; }
+  .creds-toggle {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: none; border: none; color: var(--text-muted);
+    font-size: 12px; cursor: pointer; padding: 2px 0;
+    font-family: var(--font); transition: color var(--transition);
+  }
+  .creds-toggle:hover { color: var(--text-secondary); }
+  .creds-section.is-collapsed textarea { display: none; }
+  .creds-section.is-collapsed .creds-toggle::after { content: ''; }
 </style>
 </head>
 <body>
 <div class="setup-container">
+  ${isConfigured ? `
+  <button class="back-link" onclick="location.href='/'">
+    ${IC.chevronLeft} Volver al dashboard
+  </button>` : ''}
+
   <div class="setup-logo">
     ${IC.cloud}
     <h1>Cloud Media Host</h1>
-    <p>Almacenamiento gratuito sobre Google Drive + Cloudflare</p>
+    <p>${isConfigured ? 'Configuracion del workspace' : 'Almacenamiento gratuito sobre Google Drive + Cloudflare'}</p>
   </div>
 
-  <div class="card setup-card">
+  <div class="card setup-card creds-section ${isConfigured ? 'is-collapsed' : ''}">
     <h2>
       <span style="color:var(--accent)">${IC.hardDrive}</span>
       Cuenta de servicio
-      <span class="badge badge-accent">Requerido</span>
+      <span class="badge ${isConfigured ? 'badge-success' : 'badge-accent'}">${isConfigured ? 'Configurado' : 'Requerido'}</span>
     </h2>
+
+    ${isConfigured ? `
+    <button class="creds-toggle" onclick="this.closest('.creds-section').classList.toggle('is-collapsed')">
+      ${IC.settings} Mostrar para actualizar credenciales
+    </button>` : ''}
 
     <div class="field-group">
       <label class="field-label">Service Account JSON</label>
-      <textarea id="driveJson" rows="4">${hasCreds ? '' : ''}</textarea>
-      <div class="field-hint">${hasCreds ? '✓ Credenciales guardadas — pegar de nuevo para actualizar' : 'Contenido completo del archivo JSON descargado de Google Cloud Console'}</div>
+      <textarea id="driveJson" rows="4" placeholder="${isConfigured ? 'Dejar vacio para mantener las credenciales actuales...' : ''}"></textarea>
+      <div class="field-hint">${isConfigured ? '✓ Credenciales guardadas — pegar de nuevo para actualizar' : 'Contenido completo del archivo JSON descargado de Google Cloud Console'}</div>
     </div>
 
     <div class="steps-box">
@@ -356,30 +491,23 @@ ${BASE_CSS}
 
   <div class="card setup-card">
     <h2>
-      <span style="color:var(--info)">${IC.hardDrive}</span>
+      <span style="color:var(--info)">${IC.folder}</span>
       Carpetas de Google Drive
       <span class="badge badge-accent">Requerido</span>
     </h2>
     <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;margin-bottom:12px">
-      Vincula las carpetas de tu Google Drive donde se almacenaran los archivos. Cada carpeta funciona como un espacio independiente con su propio API para conectar aplicaciones externas. Pega el enlace completo o solo el ID de la carpeta.
+      Vincula las carpetas de tu Google Drive donde se almacenaran los archivos. Pega el enlace completo de la carpeta o solo el ID. Cada carpeta funciona como un espacio independiente con su propio API para integrar con aplicaciones externas.
     </p>
 
     <div id="folderList">
-      ${savedFolders.map((f, i) => `
-      <div class="folder-entry" data-index="${i}">
-        <div class="folder-entry-top">
-          <input type="text" class="folder-name" placeholder="Nombre (ej: Mi app de musica)" value="${f.name || ''}">
-          <button class="btn-remove" onclick="this.closest('.folder-entry').remove()" title="Quitar">${IC.x}</button>
-        </div>
-        <div class="folder-entry-bottom">
-          <input type="text" class="folder-url" placeholder="https://drive.google.com/drive/folders/... o solo el ID" value="${f.drive_folder_id || ''}">
-        </div>
-      </div>`).join('')}
+      ${folderEntriesHtml}
     </div>
 
-    <button class="add-folder-btn" onclick="addFolderEntry()">
-      + Agregar carpeta
-    </button>
+    <div id="addFolderArea" style="margin-top:8px">
+      <button class="add-folder-btn" id="addFolderBtn" type="button">
+        + Agregar otra carpeta
+      </button>
+    </div>
   </div>
 
   <div class="card setup-card">
@@ -412,7 +540,7 @@ ${BASE_CSS}
     </h2>
     <div class="field-group">
       <label class="field-label">Contrasena de administrador</label>
-      <input type="password" id="adminPwd" placeholder="Dejar vacio = acceso abierto a todos">
+      <input type="password" id="adminPwd" placeholder="${isConfigured ? 'Dejar vacio para mantener la actual' : 'Dejar vacio = acceso abierto a todos'}">
       <div class="field-hint">Solo necesario si quieres restringir eliminacion y cambios de configuracion</div>
     </div>
   </div>
@@ -430,8 +558,8 @@ ${BASE_CSS}
     </a>
   </div>
 
-  <button class="btn btn-primary btn-block" id="saveBtn" style="margin-top:20px;padding:12px 16px;font-size:15px" onclick="saveConfig()">
-    ${IC.check} Guardar y empezar
+  <button class="btn btn-primary btn-block" id="saveBtn" type="button" style="margin-top:20px;padding:12px 16px;font-size:15px">
+    &#10003; ${isConfigured ? 'Guardar cambios' : 'Guardar y empezar'}
   </button>
 
   <div class="save-status" id="saveStatus"></div>
@@ -442,91 +570,178 @@ ${BASE_CSS}
 </div>
 
 <script>
-document.getElementById('enableCld').addEventListener('change', e => {
-  document.getElementById('cldFields').classList.toggle('visible', e.target.checked);
-});
-
-function extractFolderId(input) {
-  const s = (input || '').trim();
-  if (!s) return '';
-  // https://drive.google.com/drive/folders/1BufFhWJG_SlP36qAfcLSVm0u2SvcjGdT
-  const m = s.match(/folders\/([a-zA-Z0-9_-]{10,})/);
-  if (m) return m[1];
-  // Just the ID directly
-  if (/^[a-zA-Z0-9_-]{10,}$/.test(s)) return s;
-  return s;
-}
-
-function addFolderEntry(name, folderId) {
-  const list = document.getElementById('folderList');
-  const idx = list.children.length;
-  const div = document.createElement('div');
-  div.className = 'folder-entry';
-  div.dataset.index = idx;
-  div.innerHTML =
-    '<div class="folder-entry-top">' +
-      '<input type="text" class="folder-name" placeholder="Nombre (ej: Mi app de musica)" value="' + (name||'') + '">' +
-      '<button class="btn-remove" onclick="this.closest(\\'.folder-entry\\').remove()" title="Quitar">${IC.x}</button>' +
-    '</div>' +
-    '<div class="folder-entry-bottom">' +
-      '<input type="text" class="folder-url" placeholder="https://drive.google.com/drive/folders/... o solo el ID" value="' + (folderId||'') + '">' +
-    '</div>';
-  list.appendChild(div);
-}
-
-async function saveConfig() {
-  const btn = document.getElementById('saveBtn');
-  const status = document.getElementById('saveStatus');
-  btn.disabled = true;
-  status.className = 'save-status';
-  status.innerHTML = '';
-
-  const driveJson = document.getElementById('driveJson').value.trim();
-  const adminPwd = document.getElementById('adminPwd').value.trim();
-  const enableCloud = document.getElementById('enableCld').checked;
-
-  if (!driveJson) { showErr('El Service Account JSON es obligatorio'); return; }
-
-  let creds;
-  try {
-    creds = JSON.parse(driveJson);
-    if (!creds.client_email || !creds.private_key) throw new Error('Campos faltantes');
-  } catch (e) { showErr('JSON invalido: ' + e.message); return; }
-
-  // Collect all folders
-  const folderEntries = document.querySelectorAll('.folder-entry');
-  const folders = [];
-  let folderError = '';
-  folderEntries.forEach(entry => {
-    const name = entry.querySelector('.folder-name').value.trim();
-    const rawId = entry.querySelector('.folder-url').value.trim();
-    const folderId = extractFolderId(rawId);
-    if (!name && !rawId) return;
-    if (!name) { folderError = 'Cada carpeta necesita un nombre'; return; }
-    if (!folderId || !/^[a-zA-Z0-9_-]{10,}$/.test(folderId)) { folderError = 'ID de carpeta invalido para "' + name + '"'; return; }
-    folders.push({ name, drive_folder_id: folderId });
+(function() {
+  document.getElementById('enableCld').addEventListener('change', function(e) {
+    document.getElementById('cldFields').classList.toggle('visible', e.target.checked);
   });
-  if (folderError) { showErr(folderError); return; }
-  if (folders.length === 0) { showErr('Agrega al menos una carpeta de Google Drive'); return; }
 
-  const config = { drive_credentials: creds, folders, admin_password: adminPwd || null };
-  if (enableCloud) {
-    config.cloudinary_cloud_name = document.getElementById('cloudName').value.trim();
-    config.cloudinary_upload_preset = document.getElementById('uploadPreset').value.trim();
-    if (!config.cloudinary_cloud_name || !config.cloudinary_upload_preset) { showErr('Cloud Name y Upload Preset son obligatorios'); return; }
+  // Attach add-folder button event
+  var addBtn = document.getElementById('addFolderBtn');
+  if (addBtn) {
+    addBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      addFolderEntry();
+    });
   }
 
-  try {
-    const res = await fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(config) });
-    const data = await res.json();
-    if (data.success) { showOk('Configuracion guardada. Creando espacios...'); setTimeout(() => location.reload(), 1500); }
-    else showErr(data.error || 'Error desconocido');
-  } catch (e) { showErr('Error de conexion: ' + e.message); }
-  btn.disabled = false;
+  // Attach save button event
+  var saveBtn = document.getElementById('saveBtn');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      saveConfig();
+    });
+  }
 
-  function showErr(msg) { status.className='save-status visible err'; status.innerHTML='${IC.alert} '+msg; btn.disabled=false; }
-  function showOk(msg) { status.className='save-status visible ok'; status.innerHTML='${IC.check} '+msg; }
-}
+  // Event delegation for remove buttons (server-rendered entries)
+  document.addEventListener('click', function(e) {
+    var removeBtn = e.target.closest('[data-remove]');
+    if (removeBtn) {
+      removeBtn.closest('.folder-entry').remove();
+    }
+  });
+
+  window.removeFolderEntry = function(btn) {
+    btn.closest('.folder-entry').remove();
+  };
+
+  window.addFolderEntry = function(name, folderId) {
+    var list = document.getElementById('folderList');
+    if (!list) return;
+    var idx = list.children.length;
+
+    var div = document.createElement('div');
+    div.className = 'folder-entry';
+    div.dataset.index = idx;
+
+    var top = document.createElement('div');
+    top.className = 'folder-entry-top';
+
+    var nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'folder-name';
+    nameInput.placeholder = 'Nombre (ej: Mi app de musica)';
+    nameInput.value = name || '';
+
+    var removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'btn-remove';
+    removeBtn.title = 'Quitar';
+    removeBtn.textContent = '\\u2715';
+    removeBtn.addEventListener('click', function() {
+      div.remove();
+    });
+
+    top.appendChild(nameInput);
+    top.appendChild(removeBtn);
+
+    var bottom = document.createElement('div');
+    bottom.className = 'folder-entry-bottom';
+
+    var urlInput = document.createElement('input');
+    urlInput.type = 'text';
+    urlInput.className = 'folder-url';
+    urlInput.placeholder = 'https://drive.google.com/drive/folders/... o solo el ID';
+    urlInput.value = folderId || '';
+
+    bottom.appendChild(urlInput);
+
+    div.appendChild(top);
+    div.appendChild(bottom);
+    list.appendChild(div);
+
+    // Move the add button below the new entry
+    var addArea = document.getElementById('addFolderArea');
+    if (addArea) {
+      list.parentNode.appendChild(addArea);
+    }
+
+    nameInput.focus();
+  };
+
+  window.extractFolderId = function(input) {
+    var s = (input || '').trim();
+    if (!s) return '';
+    var m = s.match(/folders\\/([a-zA-Z0-9_-]{10,})/);
+    if (m) return m[1];
+    if (/^[a-zA-Z0-9_-]{10,}$/.test(s)) return s;
+    return s;
+  };
+
+  window.copyApiUrl = function(text) {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(function() {
+        var toast = document.createElement('div');
+        toast.className = 'toast success';
+        toast.textContent = '\\u2713 Copiado';
+        document.body.appendChild(toast);
+        setTimeout(function() { toast.remove(); }, 1500);
+      });
+    }
+  };
+
+  window.saveConfig = async function() {
+    var btn = document.getElementById('saveBtn');
+    var status = document.getElementById('saveStatus');
+    btn.disabled = true;
+    status.className = 'save-status';
+    status.innerHTML = '';
+
+    var driveJson = document.getElementById('driveJson').value.trim();
+    var adminPwd = document.getElementById('adminPwd').value.trim();
+    var enableCloud = document.getElementById('enableCld').checked;
+    var isConfigured = ${isConfigured};
+
+    if (!driveJson && !isConfigured) { showErr('El Service Account JSON es obligatorio'); return; }
+
+    var creds = null;
+    if (driveJson) {
+      try {
+        creds = JSON.parse(driveJson);
+        if (!creds.client_email || !creds.private_key) throw new Error('Campos faltantes');
+      } catch (e) { showErr('JSON invalido: ' + e.message); return; }
+    }
+
+    var folderEntries = document.querySelectorAll('.folder-entry');
+    var folders = [];
+    var folderError = '';
+    folderEntries.forEach(function(entry) {
+      var name = entry.querySelector('.folder-name').value.trim();
+      var rawId = entry.querySelector('.folder-url').value.trim();
+      var folderId = extractFolderId(rawId);
+      var existingId = entry.dataset.folderId || '';
+      if (!name && !rawId) return;
+      if (!name) { folderError = 'Cada carpeta necesita un nombre'; return; }
+      if (!folderId || !/^[a-zA-Z0-9_-]{10,}$/.test(folderId)) { folderError = 'ID de carpeta invalido para "' + name + '"'; return; }
+      var folderObj = { name: name, drive_folder_id: folderId };
+      if (existingId) folderObj.id = existingId;
+      folders.push(folderObj);
+    });
+    if (folderError) { showErr(folderError); return; }
+    if (folders.length === 0) { showErr('Agrega al menos una carpeta de Google Drive'); return; }
+
+    var config = {};
+    if (creds) config.drive_credentials = creds;
+    config.folders = folders;
+    if (adminPwd) config.admin_password = adminPwd;
+    if (enableCloud) {
+      config.cloudinary_cloud_name = document.getElementById('cloudName').value.trim();
+      config.cloudinary_upload_preset = document.getElementById('uploadPreset').value.trim();
+      if (!config.cloudinary_cloud_name || !config.cloudinary_upload_preset) { showErr('Cloud Name y Upload Preset son obligatorios'); return; }
+    }
+
+    try {
+      var res = await fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(config) });
+      var data = await res.json();
+      if (data.success) { showOk('Configuracion guardada. Redirigiendo...'); setTimeout(function() { location.href = '/'; }, 1200); }
+      else showErr(data.error || 'Error desconocido');
+    } catch (e) { showErr('Error de conexion: ' + e.message); }
+    btn.disabled = false;
+
+    function showErr(msg) { status.className='save-status visible err'; status.innerHTML='&#9888; '+msg; btn.disabled=false; }
+    function showOk(msg) { status.className='save-status visible ok'; status.innerHTML='&#10003; '+msg; }
+  };
+})();
 </script>
 </body>
 </html>`;
@@ -780,7 +995,8 @@ ${BASE_CSS}
     <div class="service-chip"><span class="dot"></span> Drive</div>
     ${hasCloudinary ? '<div class="service-chip"><span class="dot"></span> CDN</div>' : ''}
     <div class="nav-sep"></div>
-    <button class="btn-icon-only" onclick="openModal('adminModal')" title="Admin">${IC.settings}</button>
+    <a href="/setup" class="btn-icon-only" title="Configuracion" style="text-decoration:none">${IC.settings}</a>
+    <button class="btn-icon-only" onclick="openModal('adminModal')" title="Admin">${IC.lock}</button>
     <a href="/api/docs" target="_blank" class="btn-icon-only" title="API Docs">${IC.book}</a>
   </div>
 </div>
