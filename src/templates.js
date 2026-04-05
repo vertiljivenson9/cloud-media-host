@@ -564,6 +564,12 @@ ${BASE_CSS}
 
   <div class="save-status" id="saveStatus"></div>
 
+  <button class="btn btn-block" id="testDriveBtn" type="button" style="margin-top:12px;padding:10px 16px;font-size:14px;background:var(--bg-surface);border:1px solid var(--border);color:var(--text-secondary);cursor:pointer;border-radius:var(--radius-md);text-align:center;justify-content:center;width:100%;display:flex;align-items:center;gap:8px">
+    &#128269; Probar conexion con Google Drive
+  </button>
+
+  <div id="driveTestResults" style="margin-top:8px;display:none"></div>
+
   <div class="footer-text">
     Archivos almacenados en tu Google Drive (15 GB gratis) · Servido por Cloudflare Workers
   </div>
@@ -590,6 +596,42 @@ ${BASE_CSS}
     saveBtn.addEventListener('click', function(e) {
       e.preventDefault();
       saveConfig();
+    });
+  }
+
+  // Test Drive connection button
+  var testBtn = document.getElementById('testDriveBtn');
+  if (testBtn) {
+    testBtn.addEventListener('click', async function(e) {
+      e.preventDefault();
+      var resultsDiv = document.getElementById('driveTestResults');
+      resultsDiv.style.display = 'block';
+      resultsDiv.innerHTML = '<div style="padding:12px;text-align:center;color:var(--text-muted);font-size:13px">Probando conexion...</div>';
+      testBtn.disabled = true;
+      testBtn.textContent = 'Probando...';
+      try {
+        var r = await fetch('/api/test-drive', { method: 'POST' });
+        var d = await r.json();
+        if (d.steps) {
+          var html = '<div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-md);padding:16px;font-size:13px;line-height:1.7">';
+          d.steps.forEach(function(s) {
+            var icon = s.status === 'ok' ? '&#9989;' : s.status === 'warn' ? '&#9888;&#65039;' : s.status === 'fix' ? '&#128161;' : '&#10060;';
+            var color = s.status === 'ok' ? 'var(--success)' : s.status === 'warn' ? '#eab308' : s.status === 'fix' ? 'var(--info)' : 'var(--danger)';
+            html += '<div style="margin-bottom:8px;padding:8px;background:var(--bg-root);border-radius:var(--radius-sm)">';
+            html += '<div style="font-weight:600;color:' + color + '">' + icon + ' Paso ' + s.step + ': ' + s.name + '</div>';
+            html += '<div style="color:var(--text-secondary);margin-top:2px;word-break:break-all">' + s.detail + '</div>';
+            html += '</div>';
+          });
+          html += '</div>';
+          resultsDiv.innerHTML = html;
+        } else {
+          resultsDiv.innerHTML = '<div style="padding:12px;color:var(--danger);font-size:13px">' + (d.error || 'Error desconocido') + '</div>';
+        }
+      } catch(err) {
+        resultsDiv.innerHTML = '<div style="padding:12px;color:var(--danger);font-size:13px">Error de conexion: ' + err.message + '</div>';
+      }
+      testBtn.disabled = false;
+      testBtn.innerHTML = '&#128269; Probar conexion con Google Drive';
     });
   }
 
@@ -1307,24 +1349,30 @@ function uploadFiles(files) {
         } catch(e) {
           if (xhr.responseText) errMsg = xhr.responseText.substring(0, 200);
         }
+        console.error('Upload FAILED:', errMsg);
         toast(errMsg, 'error');
         fill.style.background = 'var(--danger)';
-        setTimeout(() => { fill.style.background = 'var(--accent)'; }, 1500);
+        label.textContent = 'Error: ' + errMsg;
+        setTimeout(() => { fill.style.background = 'var(--accent)'; }, 3000);
       } else {
         try {
           const d = JSON.parse(xhr.responseText);
           if (d.success && d.file) {
             console.log('Upload OK:', d.file.name, '->', d.file.id);
           } else {
-            toast(d.error || 'Error al subir', 'error');
+            var upErr = d.error || 'Error al subir (respuesta sin success)';
+            console.error('Upload FAILED (no success):', upErr);
+            toast(upErr, 'error');
             fill.style.background = 'var(--danger)';
-            setTimeout(() => { fill.style.background = 'var(--accent)'; }, 1500);
+            label.textContent = 'Error: ' + upErr;
+            setTimeout(() => { fill.style.background = 'var(--accent)'; }, 3000);
           }
         } catch(e) {
           console.error('Respuesta inesperada del servidor:', xhr.responseText);
           toast('Error de respuesta del servidor', 'error');
           fill.style.background = 'var(--danger)';
-          setTimeout(() => { fill.style.background = 'var(--accent)'; }, 1500);
+          label.textContent = 'Error de respuesta del servidor';
+          setTimeout(() => { fill.style.background = 'var(--accent)'; }, 3000);
         }
       }
       fileIndex++;

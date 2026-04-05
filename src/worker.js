@@ -21,7 +21,7 @@
  */
 
 import { hashPassword, generateId, formatSize, getFileIcon, isAllowedType } from './jwt.js';
-import { uploadFile, deleteFile as deleteDriveFile, getDownloadUrl, getEmbedUrl, createFolder as createDriveFolder, deleteFolder as deleteDriveFolder } from './google-drive.js';
+import { uploadFile, deleteFile as deleteDriveFile, getDownloadUrl, getEmbedUrl, createFolder as createDriveFolder, deleteFolder as deleteDriveFolder, listFiles as listDriveFiles } from './google-drive.js';
 import { isCloudinarySupported, uploadFile as uploadToCloudinary, getVideoThumbnail, getVideoStreamUrl } from './cloudinary-client.js';
 import { setupPage, dashboardPage, apiDocsPage } from './templates.js';
 
@@ -57,6 +57,9 @@ export default {
           break;
         case '/api/upload':
           if (request.method === 'POST') return handleUpload(request, env, url);
+          break;
+        case '/api/test-drive':
+          if (request.method === 'POST') return handleTestDrive(request, env);
           break;
         case '/api/folders':
           if (request.method === 'POST') return handleCreateFolder(request, env);
@@ -95,7 +98,7 @@ export default {
 // ============================================
 function matchRoute(path) {
   // Exact routes first
-  const exact = ['/', '/setup', '/api/docs', '/api/status', '/api/config', '/api/upload', '/api/files', '/api/folders'];
+  const exact = ['/', '/setup', '/api/docs', '/api/status', '/api/config', '/api/upload', '/api/files', '/api/folders', '/api/test-drive'];
   for (const p of exact) {
     if (path === p) return { pattern: p, params: {} };
   }
@@ -577,6 +580,115 @@ async function handleDeleteFolder(request, env, folderId) {
     success: true,
     message: `Carpeta "${folderData.name}" eliminada con ${deletedFiles} archivos`
   });
+}
+
+// ============================================
+// DRIVE DIAGNOSTIC
+// ============================================
+
+// POST /api/test-drive — Test Google Drive connection and folder access
+async function handleTestDrive(request, env) {
+  const config = await getConfig(env);
+  if (!config || !config.drive_credentials) {
+    return json({ success: false, error: 'No hay credenciales de Google Drive configuradas' }, 400);
+  }
+
+  const results = { steps: [], success: false };
+
+  // Step 1: Validate credentials format
+  const creds = config.drive_credentials;
+  results.steps.push({
+    step: 1, name: 'Formato de credenciales', status: 'ok',
+    detail: creds.client_email ? `Email: ${creds.client_email}` : 'Falta client_email'
+  });
+  if (!creds.client_email || !creds.private_key) {
+    results.steps[results.steps.length - 1].status = 'fail';
+    results.steps[results.steps.length - 1].detail = 'Faltan client_email o private_key en el JSON';
+    return json(results);
+  }
+
+  // Step 2: Get access token
+  try {
+    const { getAccessToken } = await import('./jwt.js');
+    const token = await getAccessToken(creds);
+    results.steps.push({ step: 2, name: 'Access token', status: 'ok', detail: 'Token obtenido correctamente' });
+  } catch (e) {
+    results.steps.push({ step: 2, name: 'Access token', status: 'fail', detail: e.message });
+    return json(results);
+  }
+
+  // Step 3: Check folder IDs
+  const folders = config.folders || [];
+  const defaultFolderId = config.drive_folder_id;
+  results.steps.push({
+    step: 3, name: 'Carpetas configuradas', status: folders.length > 0 ? 'ok' : 'warn',
+    detail: `${folders.length} carpeta(s). Default: ${defaultFolderId || 'NO DEFINIDA'}`
+  });
+
+  if (!defaultFolderId) {
+    results.steps.push({ step: 4, name: 'Carpeta principal', status: 'fail', detail: 'No hay carpeta principal configurada. Guarda la config de nuevo.' });
+    return json(results);
+  }
+
+  // Step 4: Test folder access (list files)
+  try {
+    const { getAccessToken } = await import('./jwt.js');
+    const token = await getAccessToken(creds);
+
+    const listResponse = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q='${defaultFolderId}'+in+parents&fields=files(id,name,size,mimeType)&pageSize=3`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+
+    if (listResponse.status === 404) {
+      results.steps.push({
+        step: 4, name: 'Acceso a carpeta', status: 'fail',
+        detail: `Carpeta NO encontrada (404). El ID "${defaultFolderId}" no existe o la Service Account no tiene acceso.`
+      });
+      results.steps.push({
+        step: 5, name: 'SOLUCION', status: 'fix',
+        detail: `Ve a Google Drive, abre la carpeta, dale "Compartir" y agrega el email "${creds.client_email}" como Editor.`
+      });
+    } else if (listResponse.status === 403) {
+      results.steps.push({
+        step: 4, name: 'Acceso a carpeta', status: 'fail',
+        detail: `Permiso denegado (403). La Service Account no tiene acceso a esta carpeta.`
+      });
+      results.steps.push({
+        step: 5, name: 'SOLUCION', status: 'fix',
+        detail: `Ve a Google Drive, abre la carpeta, dale "Compartir" y agrega el email "${creds.client_email}" como Editor.`
+      });
+    } else if (!listResponse.ok) {
+      const errText = await listResponse.text();
+      results.steps.push({
+        step: 4, name: 'Acceso a carpeta', status: 'fail',
+        detail: `Error ${listResponse.status}: ${errText.substring(0, 200)}`
+      });
+    } else {
+      const data = await listResponse.json();
+      const fileList = data.files || [];
+      results.steps.push({
+        step: 4, name: 'Acceso a carpeta', status: 'ok',
+        detail: `Carpeta accesible. Contiene ${fileList.length} archivo(s) visible(s).`
+      });
+      if (fileList.length > 0) {
+        results.steps.push({
+          step: 5, name: 'Archivos en carpeta', status: 'ok',
+          detail: fileList.map(f => `- ${f.name} (${formatSize(parseInt(f.size || 0))})`).join(' | ')
+        });
+      } else {
+        results.steps.push({
+          step: 5, name: 'Archivos en carpeta', status: 'warn',
+          detail: 'La carpeta esta vacia. Los archivos subidos deberian aparecer aqui.'
+        });
+      }
+      results.success = true;
+    }
+  } catch (e) {
+    results.steps.push({ step: 4, name: 'Acceso a carpeta', status: 'fail', detail: e.message });
+  }
+
+  return json(results);
 }
 
 // ============================================
