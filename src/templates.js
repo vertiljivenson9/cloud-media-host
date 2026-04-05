@@ -466,7 +466,7 @@ ${BASE_CSS}
     <h2>
       <span style="color:var(--accent)">${IC.hardDrive}</span>
       Cuenta de servicio
-      <span class="badge ${isConfigured ? 'badge-success' : 'badge-accent'}">${isConfigured ? 'Configurado' : 'Requerido'}</span>
+      <span class="badge badge-muted">Opcional (solo Workspace)</span>
     </h2>
 
     ${isConfigured ? `
@@ -474,19 +474,79 @@ ${BASE_CSS}
       ${IC.settings} Mostrar para actualizar credenciales
     </button>` : ''}
 
+    <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px;line-height:1.5">
+      ⚠️ Las Service Accounts <strong>no pueden crear archivos</strong> en carpetas regulares de My Drive. 
+      Solo funcionan con <strong>Shared Drives de Google Workspace</strong>. Para cuentas personales de Gmail, 
+      usa la sección <strong>OAuth2</strong> de abajo.
+    </p>
+
     <div class="field-group">
       <label class="field-label">Service Account JSON</label>
-      <textarea id="driveJson" rows="4" placeholder="${isConfigured ? 'Dejar vacio para mantener las credenciales actuales...' : ''}"></textarea>
+      <textarea id="driveJson" rows="4" placeholder="${isConfigured ? 'Dejar vacio para mantener las credenciales actuales...' : 'Opcional — solo para Google Workspace'}"></textarea>
       <div class="field-hint">${isConfigured ? '✓ Credenciales guardadas — pegar de nuevo para actualizar' : 'Contenido completo del archivo JSON descargado de Google Cloud Console'}</div>
     </div>
 
     <div class="steps-box">
-      <strong>Como obtenerlo:</strong><br>
+      <strong>Para Google Workspace con Shared Drives:</strong><br>
       1. Ir a <a href="https://console.cloud.google.com" target="_blank">console.cloud.google.com</a><br>
       2. Crear proyecto → Habilitar <strong>Google Drive API</strong><br>
       3. Crear <strong>Cuenta de servicio</strong> → Descargar clave JSON<br>
-      4. Crear carpetas en Drive y <strong>compartir cada una</strong> con el email de la cuenta de servicio
+      4. Crear un <strong>Shared Drive</strong> → Dar acceso a la Service Account
     </div>
+  </div>
+
+  <div class="card setup-card" style="border-color:var(--accent);background:linear-gradient(135deg, var(--bg-surface) 0%, rgba(249,115,22,0.05) 100%)">
+    <h2>
+      <span style="color:var(--accent)">${IC.check}</span>
+      OAuth2 — Cuenta de Google
+      <span class="badge ${existingConfig?.oauth2_refresh_token ? 'badge-success' : 'badge-accent'}">${existingConfig?.oauth2_refresh_token ? 'Conectado' : 'Recomendado'}</span>
+    </h2>
+    
+    ${existingConfig?.oauth2_refresh_token ? `
+    <div style="padding:12px 16px;background:var(--success-subtle);border:1px solid rgba(34,197,94,0.2);border-radius:var(--radius-md);margin-bottom:16px;font-size:13px;color:var(--success)">
+      ✅ Conectado como <strong>${existingConfig.oauth2_user_email || 'cuenta de Google'}</strong>
+      <br><span style="color:var(--text-muted);font-size:12px">Los archivos se subirán a tu Google Drive usando tus credenciales.</span>
+    </div>
+    <div style="margin-top:8px">
+      <button class="btn btn-ghost" id="disconnectOAuth2" type="button" style="width:100%;justify-content:center">
+        ${IC.x} Desconectar cuenta de Google
+      </button>
+    </div>
+    ` : `
+    <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;margin-bottom:12px">
+      Para cuentas personales de Gmail, usa OAuth2 para autenticar con tu cuenta de Google. 
+      Esto permite subir archivos directamente a tu Drive sin las limitaciones de la Service Account.
+    </p>
+    
+    <div class="field-group">
+      <label class="field-label">OAuth2 Client ID</label>
+      <input type="text" id="oauth2ClientId" placeholder="xxxxxxxx.apps.googleusercontent.com" value="${existingConfig?.oauth2_client_id || ''}">
+    </div>
+    
+    <div class="field-group">
+      <label class="field-label">OAuth2 Client Secret</label>
+      <input type="text" id="oauth2ClientSecret" placeholder="GOCSPX-xxxxxxxx" value="${existingConfig?.oauth2_client_secret ? '••••••••••' : ''}">
+      ${existingConfig?.oauth2_client_secret ? '<div class="field-hint">Guardado — dejar vacio para mantener el actual</div>' : ''}
+    </div>
+    
+    <div id="oauth2ConnectArea">
+      <button class="btn btn-primary btn-block" id="connectOAuth2Btn" type="button" style="margin-top:12px">
+        🔗 Conectar cuenta de Google
+      </button>
+      <div id="oauth2Status" style="margin-top:8px;display:none"></div>
+    </div>
+
+    <div class="steps-box" style="margin-top:12px">
+      <strong>Como configurar OAuth2:</strong><br>
+      1. Ir a <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud → APIs & Credentials</a><br>
+      2. Click <strong>"Crear credenciales"</strong> → <strong>"ID de cliente OAuth 2.0"</strong><br>
+      3. Tipo: <strong>Aplicación web</strong><br>
+      4. Agregar la URL de tu Worker como <strong>URI de redireccion autorizada</strong>:<br>
+      &nbsp;&nbsp;<code style="background:var(--bg-root);padding:2px 6px;border-radius:3px;font-size:11px" id="redirectUriHint">https://TU-WORKER.workers.dev/api/auth/callback</code><br>
+      5. Copiar <strong>Client ID</strong> y <strong>Client Secret</strong> y pegar arriba<br>
+      6. Click <strong>"Conectar cuenta de Google"</strong> → Autorizar → Listo!
+    </div>
+    `}
   </div>
 
   <div class="card setup-card">
@@ -740,7 +800,12 @@ ${BASE_CSS}
     var enableCloud = document.getElementById('enableCld').checked;
     var isConfigured = ${isConfigured};
 
-    if (!driveJson && !isConfigured) { showErr('El Service Account JSON es obligatorio'); return; }
+    // OAuth2 fields
+    var oauth2ClientId = document.getElementById('oauth2ClientId') ? document.getElementById('oauth2ClientId').value.trim() : '';
+    var oauth2ClientSecret = document.getElementById('oauth2ClientSecret') ? document.getElementById('oauth2ClientSecret').value.trim() : '';
+
+    // Validate: need at least OAuth2 OR Service Account
+    if (!driveJson && !oauth2ClientId && !isConfigured) { showErr('Configura OAuth2 o Service Account para continuar'); return; }
 
     var creds = null;
     if (driveJson) {
@@ -772,6 +837,9 @@ ${BASE_CSS}
     if (creds) config.drive_credentials = creds;
     config.folders = folders;
     if (adminPwd) config.admin_password = adminPwd;
+    // Include OAuth2 credentials
+    if (oauth2ClientId) config.oauth2_client_id = oauth2ClientId;
+    if (oauth2ClientSecret && oauth2ClientSecret !== '••••••••••') config.oauth2_client_secret = oauth2ClientSecret;
     if (enableCloud) {
       config.cloudinary_cloud_name = document.getElementById('cloudName').value.trim();
       config.cloudinary_upload_preset = document.getElementById('uploadPreset').value.trim();
@@ -789,6 +857,90 @@ ${BASE_CSS}
     function showErr(msg) { status.className='save-status visible err'; status.innerHTML='&#9888; '+msg; btn.disabled=false; }
     function showOk(msg) { status.className='save-status visible ok'; status.innerHTML='&#10003; '+msg; }
   };
+
+  // OAuth2 Connect button
+  var connectBtn = document.getElementById('connectOAuth2Btn');
+  if (connectBtn) {
+    connectBtn.addEventListener('click', async function(e) {
+      e.preventDefault();
+      var oauth2Status = document.getElementById('oauth2Status');
+      var clientId = document.getElementById('oauth2ClientId').value.trim();
+      var clientSecret = document.getElementById('oauth2ClientSecret').value.trim();
+      
+      if (!clientId || !clientSecret) {
+        oauth2Status.style.display = 'block';
+        oauth2Status.innerHTML = '<div style="padding:12px;color:var(--danger);font-size:13px;background:var(--danger-subtle);border-radius:var(--radius-md)">Completa Client ID y Client Secret primero.</div>';
+        return;
+      }
+      
+      // Save OAuth2 credentials first
+      try {
+        var saveRes = await fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({
+          oauth2_client_id: clientId,
+          oauth2_client_secret: clientSecret,
+          drive_credentials: document.getElementById('driveJson').value.trim() || undefined,
+          folders: []
+        })});
+        var saveData = await saveRes.json();
+        if (!saveData.success) {
+          oauth2Status.style.display = 'block';
+          oauth2Status.innerHTML = '<div style="padding:12px;color:var(--danger);font-size:13px;background:var(--danger-subtle);border-radius:var(--radius-md)">Error al guardar: ' + (saveData.error || 'Unknown') + '</div>';
+          return;
+        }
+      } catch(err) {
+        oauth2Status.style.display = 'block';
+        oauth2Status.innerHTML = '<div style="padding:12px;color:var(--danger);font-size:13px;background:var(--danger-subtle);border-radius:var(--radius-md)">Error: ' + err.message + '</div>';
+        return;
+      }
+      
+      // Get the OAuth2 consent URL
+      try {
+        connectBtn.disabled = true;
+        connectBtn.textContent = 'Obteniendo URL de autorizacion...';
+        
+        var authRes = await fetch('/api/auth');
+        var authData = await authRes.json();
+        
+        if (authData.auth_url) {
+          oauth2Status.style.display = 'block';
+          oauth2Status.innerHTML = '<div style="padding:12px;font-size:13px;background:var(--info-subtle);border-radius:var(--radius-md);color:var(--text-primary)">' +
+            '&#128274; Redirigiendo a Google para autorizar...<br>' +
+            '<span style="font-size:11px;color:var(--text-muted)">Si no se redirige automaticamente, </span>' +
+            '<a href="' + authData.auth_url + '" target="_blank" style="font-size:11px">abre este enlace</a></div>';
+          // Redirect to Google consent
+          window.location.href = authData.auth_url;
+        } else {
+          oauth2Status.style.display = 'block';
+          oauth2Status.innerHTML = '<div style="padding:12px;color:var(--danger);font-size:13px;background:var(--danger-subtle);border-radius:var(--radius-md)">Error: ' + (authData.error || 'No se pudo obtener URL de autorizacion') + '</div>';
+        }
+      } catch(err) {
+        oauth2Status.style.display = 'block';
+        oauth2Status.innerHTML = '<div style="padding:12px;color:var(--danger);font-size:13px;background:var(--danger-subtle);border-radius:var(--radius-md)">Error: ' + err.message + '</div>';
+      }
+      connectBtn.disabled = false;
+    });
+  }
+
+  // OAuth2 Disconnect button
+  var disconnectBtn = document.getElementById('disconnectOAuth2');
+  if (disconnectBtn) {
+    disconnectBtn.addEventListener('click', async function(e) {
+      e.preventDefault();
+      if (!confirm('Desconectar la cuenta de Google? Ya no podras subir archivos con OAuth2.')) return;
+      try {
+        var res = await fetch('/api/auth/disconnect', { method: 'POST' });
+        var data = await res.json();
+        if (data.success) { location.reload(); }
+        else alert('Error: ' + (data.error || 'Unknown'));
+      } catch(err) { alert('Error: ' + err.message); }
+    });
+  }
+
+  // Update redirect URI hint with current origin
+  var redirectHint = document.getElementById('redirectUriHint');
+  if (redirectHint) {
+    redirectHint.textContent = window.location.origin + '/api/auth/callback';
+  }
 })();
 </script>
 </body>

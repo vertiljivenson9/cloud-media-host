@@ -5,7 +5,7 @@
 -- ============================================
 
 -- Tabla de configuracion de la app
--- Guarda credenciales de Google Drive, Cloudinary y password admin
+-- Guarda credenciales de Google Drive (Service Account y/o OAuth2), Cloudinary y password admin
 CREATE TABLE IF NOT EXISTS app_config (
   id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),  -- Solo permite 1 fila
   drive_credentials JSONB NOT NULL DEFAULT '{}',     -- Service Account JSON completo
@@ -14,6 +14,11 @@ CREATE TABLE IF NOT EXISTS app_config (
   cloudinary_cloud_name TEXT,
   cloudinary_upload_preset TEXT,
   admin_password_hash TEXT,
+  -- OAuth2 fields (recommended for personal Gmail accounts)
+  oauth2_client_id TEXT,                             -- OAuth2 Client ID from Google Cloud Console
+  oauth2_client_secret TEXT,                         -- OAuth2 Client Secret
+  oauth2_refresh_token TEXT,                         -- OAuth2 Refresh Token (obtained via callback)
+  oauth2_user_email TEXT,                            -- Email of the connected Google account
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -135,4 +140,10 @@ CREATE TRIGGER config_updated_at
 --
 -- ALTER TABLE files ADD COLUMN IF NOT EXISTS original_name TEXT;
 -- ALTER TABLE files DROP COLUMN IF EXISTS date_display;
+--
+-- -- OAuth2 columns migration:
+-- ALTER TABLE app_config ADD COLUMN IF NOT EXISTS oauth2_client_id TEXT;
+-- ALTER TABLE app_config ADD COLUMN IF NOT EXISTS oauth2_client_secret TEXT;
+-- ALTER TABLE app_config ADD COLUMN IF NOT EXISTS oauth2_refresh_token TEXT;
+-- ALTER TABLE app_config ADD COLUMN IF NOT EXISTS oauth2_user_email TEXT;
 -- ============================================

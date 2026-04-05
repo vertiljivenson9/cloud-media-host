@@ -22,12 +22,15 @@
  *   GET  /api/folders/:id/files → List files in a specific folder
  *   DELETE /api/folders/:id    → Delete a folder and all its files
  *   POST /api/test-drive       → Test Google Drive connection
+ *   GET  /api/auth              → Start OAuth2 consent flow (redirect to Google)
+ *   GET  /api/auth/callback     → Handle OAuth2 callback from Google
+ *   POST /api/auth/disconnect   → Disconnect OAuth2 (remove refresh token)
  *   GET  /api/debug            → Debug: test Supabase connection and table integrity
  *   GET  /api/verify-tables    → Verify required tables exist in Supabase
  */
 
 import { hashPassword, generateId, formatSize, getFileIcon, isAllowedType } from './jwt.js';
-import { uploadFile, deleteFile as deleteDriveFile, getDownloadUrl, getEmbedUrl, createFolder as createDriveFolder, deleteFolder as deleteDriveFolder } from './google-drive.js';
+import { uploadFile, deleteFile as deleteDriveFile, getDownloadUrl, getEmbedUrl, createFolder as createDriveFolder, deleteFolder as deleteDriveFolder, refreshOAuth2Token, exchangeCodeForTokens, buildOAuth2Url, getDriveAccessToken, verifyCredentials } from './google-drive.js';
 import { isCloudinarySupported, uploadFile as uploadToCloudinary, getVideoThumbnail, getVideoStreamUrl } from './cloudinary-client.js';
 import { setupPage, dashboardPage, apiDocsPage } from './templates.js';
 import { createClient } from './supabase.js';
@@ -65,6 +68,15 @@ export default {
           break;
         case '/api/test-drive':
           if (request.method === 'POST') return handleTestDrive(request, env);
+          break;
+        case '/api/auth':
+          if (request.method === 'GET') return handleAuthStart(request, env, url);
+          break;
+        case '/api/auth/callback':
+          if (request.method === 'GET') return handleAuthCallback(request, env, url);
+          break;
+        case '/api/auth/disconnect':
+          if (request.method === 'POST') return handleAuthDisconnect(request, env);
           break;
         case '/api/debug':
           if (request.method === 'GET') return handleDebug(request, env);
@@ -108,7 +120,7 @@ export default {
 // ROUTER
 // ============================================
 function matchRoute(path) {
-  const exact = ['/', '/setup', '/api/docs', '/api/status', '/api/config', '/api/upload', '/api/files', '/api/folders', '/api/test-drive', '/api/debug', '/api/verify-tables'];
+  const exact = ['/', '/setup', '/api/docs', '/api/status', '/api/config', '/api/upload', '/api/files', '/api/folders', '/api/test-drive', '/api/auth', '/api/auth/disconnect', '/api/debug', '/api/verify-tables'];
   for (const p of exact) {
     if (path === p) return { pattern: p, params: {} };
   }
@@ -284,16 +296,17 @@ async function handleStatus(request, env) {
 async function handleSaveConfig(request, env) {
   try {
     const body = await request.json();
-    const { drive_credentials, folders, cloudinary_cloud_name, cloudinary_upload_preset, admin_password } = body;
+    const { drive_credentials, folders, cloudinary_cloud_name, cloudinary_upload_preset, admin_password, oauth2_client_id, oauth2_client_secret } = body;
     const db = getDb(env);
 
     // Get existing config FIRST
     const existingConfig = await getConfig(env);
 
-    // Validate credentials
+    // Validate credentials - accept either OAuth2 or Service Account
     const credentials = drive_credentials || existingConfig?.drive_credentials;
-    if (!credentials) {
-      return json({ success: false, error: 'Google Drive credentials son obligatorios' }, 400);
+    const hasOAuth2 = !!(oauth2_client_id || existingConfig?.oauth2_client_id);
+    if (!credentials && !hasOAuth2) {
+      return json({ success: false, error: 'Se necesita OAuth2 o Service Account credentials' }, 400);
     }
 
     // Build folder list from request
@@ -317,11 +330,30 @@ async function handleSaveConfig(request, env) {
 
     // Build config data for app_config table
     const configData = {
-      drive_credentials: credentials,
+      drive_credentials: credentials || existingConfig?.drive_credentials || null,
       drive_folder_id: folderList.length > 0 ? folderList[0].drive_folder_id : (existingConfig?.drive_folder_id || null),
       admin_password_hash: admin_password ? await hashPassword(admin_password) : (existingConfig?.admin_password_hash || null),
       updated_at: new Date().toISOString(),
     };
+
+    // OAuth2 settings
+    if (oauth2_client_id) {
+      configData.oauth2_client_id = oauth2_client_id;
+    } else if (existingConfig?.oauth2_client_id) {
+      configData.oauth2_client_id = existingConfig.oauth2_client_id;
+    }
+    if (oauth2_client_secret) {
+      configData.oauth2_client_secret = oauth2_client_secret;
+    } else if (existingConfig?.oauth2_client_secret) {
+      configData.oauth2_client_secret = existingConfig.oauth2_client_secret;
+    }
+    // Never overwrite refresh_token on config save (it comes from OAuth2 callback)
+    if (existingConfig?.oauth2_refresh_token) {
+      configData.oauth2_refresh_token = existingConfig.oauth2_refresh_token;
+    }
+    if (existingConfig?.oauth2_user_email) {
+      configData.oauth2_user_email = existingConfig.oauth2_user_email;
+    }
 
     // Keep existing creation date
     if (existingConfig?.created_at) {
@@ -419,7 +451,7 @@ async function handleResetConfig(request, env) {
 // POST /api/folders — Create folder via API
 async function handleCreateFolder(request, env) {
   const config = await getConfig(env);
-  if (!config || !config.drive_credentials) {
+  if (!config || (!config.drive_credentials && !config.oauth2_refresh_token)) {
     return json({ success: false, error: 'App no configurada' }, 400);
   }
 
@@ -432,7 +464,7 @@ async function handleCreateFolder(request, env) {
     const db = getDb(env);
 
     const driveResult = await createDriveFolder(
-      config.drive_credentials,
+      config,
       config.drive_folder_id,
       folderName
     );
@@ -504,8 +536,8 @@ async function handleDeleteFolder(request, env, folderId) {
   let deletedFromDrive = 0;
   for (const file of files) {
     try {
-      if (config?.drive_credentials && file.drive_id) {
-        await deleteDriveFile(config.drive_credentials, file.drive_id);
+      if ((config?.drive_credentials || config?.oauth2_refresh_token) && file.drive_id) {
+        await deleteDriveFile(config, file.drive_id);
         deletedFromDrive++;
       }
     } catch (e) {
@@ -538,30 +570,184 @@ async function handleDeleteFolder(request, env, folderId) {
 }
 
 // ============================================
+// OAUTH2 HANDLERS
+// ============================================
+
+// GET /api/auth — Start OAuth2 consent flow
+async function handleAuthStart(request, env, url) {
+  const config = await getConfig(env);
+  if (!config || !config.oauth2_client_id) {
+    return json({ error: 'OAuth2 no configurado. Agrega Client ID y Client Secret en Setup.' }, 400);
+  }
+
+  // Build the redirect URI based on the current request
+  const origin = new URL(request.url).origin;
+  const redirectUri = `${origin}/api/auth/callback`;
+
+  // Generate state for CSRF protection
+  const state = crypto.randomUUID();
+
+  const authUrl = buildOAuth2Url(config.oauth2_client_id, redirectUri, state);
+
+  // Return the URL (frontend will redirect) rather than redirecting directly,
+  // so we can show the URL in case of popup issues
+  return json({
+    auth_url: authUrl,
+    redirect_uri: redirectUri,
+    state: state,
+    message: 'Redirige al usuario a esta URL para autorizar el acceso a Google Drive.'
+  });
+}
+
+// GET /api/auth/callback — Handle OAuth2 callback from Google
+async function handleAuthCallback(request, env, url) {
+  const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
+  const error = url.searchParams.get('error');
+
+  if (error) {
+    return html(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Error OAuth2</title>
+      <style>body{background:#09090B;color:#fafafa;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}
+      .box{max-width:500px;text-align:center;padding:24px}h1{color:#EF4444}p{color:#a1a1aa;margin-top:12px;font-size:14px}</style></head>
+      <body><div class="box"><h1>Error de autorización</h1><p>${error}: ${url.searchParams.get('error_description') || 'Unknown error'}</p>
+      <a href="/setup" style="color:#F97316;margin-top:20px;display:inline-block">← Volver a Setup</a></div></body></html>`);
+  }
+
+  if (!code) {
+    return html(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Error</title>
+      <style>body{background:#09090B;color:#fafafa;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}
+      .box{max-width:500px;text-align:center;padding:24px}h1{color:#EF4444}p{color:#a1a1aa;margin-top:12px;font-size:14px}</style></head>
+      <body><div class="box"><h1>Error</h1><p>No se recibió código de autorización.</p>
+      <a href="/setup" style="color:#F97316;margin-top:20px;display:inline-block">← Volver a Setup</a></div></body></html>`);
+  }
+
+  try {
+    const db = getDb(env);
+    const config = await getConfig(env);
+
+    if (!config || !config.oauth2_client_id || !config.oauth2_client_secret) {
+      return html(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Error</title>
+        <style>body{background:#09090B;color:#fafafa;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}
+        .box{max-width:500px;text-align:center;padding:24px}h1{color:#EF4444}p{color:#a1a1aa;margin-top:12px;font-size:14px}</style></head>
+        <body><div class="box"><h1>Error de configuración</h1><p>OAuth2 Client ID y Client Secret deben estar configurados en Setup.</p>
+        <a href="/setup" style="color:#F97316;margin-top:20px;display:inline-block">← Volver a Setup</a></div></body></html>`);
+    }
+
+    const origin = new URL(request.url).origin;
+    const redirectUri = `${origin}/api/auth/callback`;
+
+    // Exchange code for tokens
+    const tokens = await exchangeCodeForTokens(
+      config.oauth2_client_id,
+      config.oauth2_client_secret,
+      code,
+      redirectUri
+    );
+
+    if (!tokens.refresh_token) {
+      return html(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Advertencia</title>
+        <style>body{background:#09090B;color:#fafafa;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}
+        .box{max-width:500px;text-align:center;padding:24px}h1{color:#eab308}p{color:#a1a1aa;margin-top:12px;font-size:14px}</style></head>
+        <body><div class="box"><h1>Sin refresh token</h1><p>No se obtuvo refresh token. Intenta de nuevo y asegúrate de hacer clic en "Permitir" cuando se te pida consentimiento.</p>
+        <a href="/setup" style="color:#F97316;margin-top:20px;display:inline-block">← Volver a Setup</a></div></body></html>`);
+    }
+
+    // Store refresh token in Supabase
+    await db.update('app_config', {
+      oauth2_refresh_token: tokens.refresh_token,
+      oauth2_user_email: undefined, // Will be populated later if needed
+      updated_at: new Date().toISOString(),
+    }, { id: 1 });
+
+    // Test the token by getting user info
+    let userInfo = null;
+    try {
+      const token = await refreshOAuth2Token(config.oauth2_client_id, config.oauth2_client_secret, tokens.refresh_token);
+      const aboutRes = await fetch('https://www.googleapis.com/drive/v3/about?fields=user(displayName,emailAddress)', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (aboutRes.ok) {
+        userInfo = await aboutRes.json();
+        if (userInfo?.user?.emailAddress) {
+          await db.update('app_config', { oauth2_user_email: userInfo.user.emailAddress }, { id: 1 });
+        }
+      }
+    } catch (e) {
+      console.error('Could not get user info:', e.message);
+    }
+
+    const email = userInfo?.user?.emailAddress || 'cuenta conectada';
+    return html(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Conexión exitosa</title>
+      <style>body{background:#09090B;color:#fafafa;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}
+      .box{max-width:500px;text-align:center;padding:24px}h1{color:#22C55E}p{color:#a1a1aa;margin-top:12px;font-size:14px}
+      .email{color:#F97316;font-weight:600;font-size:16px;margin-top:16px}
+      a{color:#F97316;margin-top:24px;display:inline-block;font-size:14px}</style></head>
+      <body><div class="box"><h1>✅ Cuenta conectada</h1>
+      <p>Tu cuenta de Google Drive está ahora vinculada.</p>
+      <div class="email">${email}</div>
+      <p style="font-size:12px;color:#71717A;margin-top:8px">Ya puedes subir archivos a tus carpetas de Drive.</p>
+      <a href="/">→ Ir al Dashboard</a></div></body></html>`);
+
+  } catch (err) {
+    console.error('OAuth2 callback error:', err);
+    return html(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Error</title>
+      <style>body{background:#09090B;color:#fafafa;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}
+      .box{max-width:500px;text-align:center;padding:24px}h1{color:#EF4444}p{color:#a1a1aa;margin-top:12px;font-size:14px;font-family:monospace;word-break:break-all}</style></head>
+      <body><div class="box"><h1>Error al conectar</h1><p>${err.message}</p>
+      <a href="/setup" style="color:#F97316;margin-top:20px;display:inline-block">← Volver a Setup</a></div></body></html>`);
+  }
+}
+
+// POST /api/auth/disconnect — Remove OAuth2 credentials
+async function handleAuthDisconnect(request, env) {
+  const isAdmin = await verifyAdmin(request, env);
+  if (!isAdmin) return json({ success: false, error: 'Unauthorized' }, 401);
+
+  try {
+    const db = getDb(env);
+    await db.update('app_config', {
+      oauth2_refresh_token: null,
+      oauth2_user_email: null,
+      updated_at: new Date().toISOString(),
+    }, { id: 1 });
+    return json({ success: true, message: 'OAuth2 desconectado.' });
+  } catch (e) {
+    return json({ success: false, error: e.message }, 500);
+  }
+}
+
+// ============================================
 // DRIVE DIAGNOSTIC
 // ============================================
 
 async function handleTestDrive(request, env) {
   const config = await getConfig(env);
-  if (!config || !config.drive_credentials) {
+  const hasCreds = !!(config.drive_credentials);
+  const hasOAuth2 = !!(config.oauth2_client_id && config.oauth2_refresh_token);
+  if (!hasCreds && !hasOAuth2) {
     return json({ success: false, error: 'No hay credenciales configuradas' }, 400);
   }
 
   const results = { steps: [], database: 'supabase' };
-  const creds = config.drive_credentials;
 
-  // Step 1
+  // Step 1: Check which auth method is available
   results.steps.push({
-    step: 1, name: 'Formato de credenciales', status: creds.client_email ? 'ok' : 'fail',
-    detail: creds.client_email ? `Email: ${creds.client_email}` : 'Falta client_email'
+    step: 1, name: 'Metodo de autenticacion',
+    status: hasOAuth2 ? 'ok' : (hasCreds ? 'warn' : 'fail'),
+    detail: hasOAuth2
+      ? `OAuth2 configurado (cliente: ${config.oauth2_client_id.substring(0, 20)}...)`
+      : hasCreds
+        ? `Service Account: ${config.drive_credentials.client_email} (nota: no puede crear archivos en Drive personal)`
+        : 'Sin credenciales'
   });
-  if (!creds.client_email || !creds.private_key) return json(results);
 
-  // Step 2
+  // Step 2: Test token
   try {
-    const { getAccessToken } = await import('./jwt.js');
-    await getAccessToken(creds);
-    results.steps.push({ step: 2, name: 'Access token', status: 'ok', detail: 'Token OK' });
+    const authResult = await getDriveAccessToken(config);
+    results.steps.push({
+      step: 2, name: 'Access token', status: 'ok',
+      detail: `Token OK via ${authResult.method}`
+    });
   } catch (e) {
     results.steps.push({ step: 2, name: 'Access token', status: 'fail', detail: e.message });
     return json(results);
@@ -583,8 +769,9 @@ async function handleTestDrive(request, env) {
 
   // Step 4: Test folder access
   try {
-    const { getAccessToken } = await import('./jwt.js');
-    const token = await getAccessToken(creds);
+    const authResult = await getDriveAccessToken(config);
+    const token = authResult.token;
+    const authMethod = authResult.method;
 
     const res = await fetch(
       `https://www.googleapis.com/drive/v3/files?q='${defaultFolderId}'+in+parents&fields=files(id,name,size,mimeType)&pageSize=3`,
@@ -594,11 +781,13 @@ async function handleTestDrive(request, env) {
     if (res.status === 404 || res.status === 403) {
       results.steps.push({
         step: 4, name: 'Acceso a carpeta', status: 'fail',
-        detail: `${res.status}: La Service Account no tiene acceso a esta carpeta.`
+        detail: `${res.status}: ${authMethod === 'oauth2' ? 'El token OAuth2 no tiene acceso a esta carpeta.' : 'La Service Account no tiene acceso a esta carpeta.'}`
       });
       results.steps.push({
         step: 5, name: 'SOLUCION', status: 'fix',
-        detail: `Comparte la carpeta con "${creds.client_email}" como Editor.`
+        detail: authMethod === 'oauth2'
+          ? 'Asegurate de que la carpeta pertenece a la cuenta de Google conectada.'
+          : `Comparte la carpeta con "${config.drive_credentials?.client_email}" como Editor. O mejor: configura OAuth2 en Setup.`
       });
     } else if (!res.ok) {
       results.steps.push({ step: 4, name: 'Acceso a carpeta', status: 'fail', detail: `Error ${res.status}` });
@@ -836,7 +1025,7 @@ async function handleUpload(request, env, url) {
   let driveResult;
   try {
     driveResult = await uploadFile(
-      config.drive_credentials, targetDriveFolderId, fileName, contentType, fileData
+      config, targetDriveFolderId, fileName, contentType, fileData
     );
     console.log('Drive OK:', driveResult.id);
   } catch (e) {
@@ -956,8 +1145,8 @@ async function handleDeleteFile(request, env, id) {
   const config = await getConfig(env);
 
   try {
-    if (config?.drive_credentials && file.drive_id) {
-      await deleteDriveFile(config.drive_credentials, file.drive_id);
+    if ((config?.drive_credentials || config?.oauth2_refresh_token) && file.drive_id) {
+      await deleteDriveFile(config, file.drive_id);
     }
   } catch (e) {
     console.error('Drive delete warning:', e.message);
@@ -979,8 +1168,8 @@ async function handleDeleteAllFiles(request, env) {
   let deleted = 0, errors = 0;
   for (const file of files) {
     try {
-      if (config?.drive_credentials && file.drive_id) {
-        await deleteDriveFile(config.drive_credentials, file.drive_id);
+      if ((config?.drive_credentials || config?.oauth2_refresh_token) && file.drive_id) {
+        await deleteDriveFile(config, file.drive_id);
         deleted++;
       }
     } catch (e) {
