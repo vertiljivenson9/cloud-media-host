@@ -4,14 +4,11 @@
   "description": "Free media hosting on Cloudflare using Google Drive + Cloudinary. No VPS needed.",
   "private": true,
   "scripts": {
-    "dev": "wrangler dev",
+    "build": "echo 'Cloudflare Workers no necesita build - se deploya directo'",
     "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
     "tail": "wrangler tail",
-    "kv:create": "wrangler kv:namespace create MEDIA_KV",
-    "kv:put": "wrangler kv:key put",
-    "kv:get": "wrangler kv:key get",
-    "kv:list": "wrangler kv:key list",
-    "kv:delete": "wrangler kv:key delete"
+    "kv:create": "wrangler kv:namespace create MEDIA_KV"
   },
   "devDependencies": {
     "wrangler": "^3.99.0"
