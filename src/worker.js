@@ -341,6 +341,7 @@ async function handleIndex(request, env) {
     drive_folder_id: f.drive_folder_id,
     drive_link: f.drive_link,
     created_at: f.created_at,
+    api_key: await generateFolderApiKey(f.id, env),
   }));
 
   files.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
@@ -379,6 +380,7 @@ async function handleSetup(request, env) {
         drive_folder_id: f.drive_folder_id,
         drive_link: f.drive_link,
         created_at: f.created_at,
+        api_key: await generateFolderApiKey(f.id, env),
       }));
     }
   } catch (e) {

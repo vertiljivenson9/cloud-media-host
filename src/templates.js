@@ -291,6 +291,15 @@ export function setupPage(existingConfig, authState) {
             <code class="folder-api-code">DELETE /api/folders/${fid}</code>
             <button class="btn-copy-api" onclick="event.stopPropagation();copyApiUrl('DELETE /api/folders/${fid}')">${IC.copy}</button>
           </div>
+          <div class="folder-api-row" style="border-bottom:none;padding-bottom:4px">
+            <span class="folder-api-label" style="color:var(--accent);font-weight:600">API Key</span>
+            <code class="folder-api-code" id="apikey-${fid}" style="font-size:10px;letter-spacing:0.5px">${f.api_key || 'generando...'}</code>
+            <button class="btn-copy-api" onclick="event.stopPropagation();copyApiUrl('${f.api_key || ''}')" title="Copiar API Key">${IC.copy}</button>
+          </div>
+          <div class="folder-api-info" style="padding-top:2px;padding-bottom:2px">
+            Usa esta key en el header <code>X-API-Key</code> o <code>Authorization: Bearer</code> para acceder a esta carpeta desde aplicaciones externas. Ejemplo:<br>
+            <code style="background:var(--bg-root);padding:1px 5px;border-radius:3px;font-size:10px;color:var(--accent);font-family:'SF Mono','Fira Code',monospace">curl -H "X-API-Key: ${f.api_key || '...'}" https://TU-WORKER.workers.dev/api/folders/${fid}/files</code>
+          </div>
           <div class="folder-api-info">
             Para usar la API, incluye el header <code>X-Folder-ID: ${fid}</code> o envia <code>folder_id</code> como parametro. Consulta la <a href="/api/docs" target="_blank">documentacion completa</a> para mas detalles y ejemplos en multiples lenguajes.
           </div>
