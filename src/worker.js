@@ -22,6 +22,8 @@
  *   GET  /api/folders/:id/files → List files in a specific folder
  *   DELETE /api/folders/:id    → Delete a folder and all its files
  *   POST /api/test-drive       → Test Google Drive connection
+ *   GET  /api/debug            → Debug: test Supabase connection and table integrity
+ *   GET  /api/verify-tables    → Verify required tables exist in Supabase
  */
 
 import { hashPassword, generateId, formatSize, getFileIcon, isAllowedType } from './jwt.js';
@@ -64,6 +66,12 @@ export default {
         case '/api/test-drive':
           if (request.method === 'POST') return handleTestDrive(request, env);
           break;
+        case '/api/debug':
+          if (request.method === 'GET') return handleDebug(request, env);
+          break;
+        case '/api/verify-tables':
+          if (request.method === 'GET') return handleVerifyTables(request, env);
+          break;
         case '/api/folders':
           if (request.method === 'POST') return handleCreateFolder(request, env);
           if (request.method === 'GET') return handleListFolders(request, env);
@@ -100,7 +108,7 @@ export default {
 // ROUTER
 // ============================================
 function matchRoute(path) {
-  const exact = ['/', '/setup', '/api/docs', '/api/status', '/api/config', '/api/upload', '/api/files', '/api/folders', '/api/test-drive'];
+  const exact = ['/', '/setup', '/api/docs', '/api/status', '/api/config', '/api/upload', '/api/files', '/api/folders', '/api/test-drive', '/api/debug', '/api/verify-tables'];
   for (const p of exact) {
     if (path === p) return { pattern: p, params: {} };
   }
@@ -248,22 +256,28 @@ async function handleApiDocs(request, env, url) {
 
 // GET /api/status
 async function handleStatus(request, env) {
-  const db = getDb(env);
-  const config = await getConfig(env);
-  const fileCount = await db.count('files');
-  const folderCount = await db.count('folders');
+  try {
+    const db = getDb(env);
+    const config = await getConfig(env);
+    let fileCount = 0;
+    let folderCount = 0;
+    try { fileCount = await db.count('files'); } catch (e) { /* table might not exist */ }
+    try { folderCount = await db.count('folders'); } catch (e) { /* table might not exist */ }
 
-  return json({
-    configured: !!(config && config.drive_credentials),
-    database: 'supabase',
-    services: {
-      drive: !!(config?.drive_credentials),
-      cloudinary: !!(config?.cloudinary_cloud_name)
-    },
-    file_count: fileCount,
-    folder_count: folderCount,
-    has_admin_password: !!config?.admin_password_hash
-  });
+    return json({
+      configured: !!(config && config.drive_credentials),
+      database: 'supabase',
+      services: {
+        drive: !!(config?.drive_credentials),
+        cloudinary: !!(config?.cloudinary_cloud_name)
+      },
+      file_count: fileCount,
+      folder_count: folderCount,
+      has_admin_password: !!config?.admin_password_hash
+    });
+  } catch (e) {
+    return json({ configured: false, error: e.message, database: 'supabase' });
+  }
 }
 
 // POST /api/config — Save configuration
@@ -611,98 +625,287 @@ async function handleTestDrive(request, env) {
 }
 
 // ============================================
-// FILE HANDLERS
+// DEBUG & DIAGNOSTICS
 // ============================================
 
-// POST /api/upload
-async function handleUpload(request, env, url) {
-  const config = await getConfig(env);
-  if (!config || !config.drive_credentials) {
-    return json({ success: false, error: 'App no configurada' }, 400);
+// GET /api/debug — Full Supabase connection and table integrity test
+async function handleDebug(request, env) {
+  const results = {
+    timestamp: new Date().toISOString(),
+    supabase: { connected: false, url: null, error: null },
+    tables: {},
+    insert_test: null,
+  };
+
+  const requiredTables = ['app_config', 'folders', 'files'];
+
+  // Step 1: Test Supabase connection
+  try {
+    const db = getDb(env);
+    results.supabase.url = env.SUPABASE_URL ? env.SUPABASE_URL.replace(/\/.*$/, '') : null;
+    results.supabase.connected = true;
+  } catch (e) {
+    results.supabase.error = e.message;
+    return json(results);
   }
 
-  try {
-    const formData = await request.formData();
-    const file = formData.get('file');
-    if (!file) return json({ success: false, error: 'No se encontró el archivo (campo "file")' }, 400);
+  const db = getDb(env);
 
-    const fileName = file.name || 'unnamed';
-    const contentType = file.type || 'application/octet-stream';
-    console.log('Upload:', fileName, contentType);
-
-    if (!isAllowedType(contentType)) {
-      return json({ success: false, error: `Tipo no permitido: ${contentType}. Usa MP3, MP4, ZIP o imágenes.` }, 400);
+  // Step 2: Test each table
+  for (const table of requiredTables) {
+    const tableResult = { exists: false, count: null, error: null };
+    try {
+      // Try SELECT with LIMIT 1 to test table existence
+      await db.select(table, '*', { limit: 1 });
+      tableResult.exists = true;
+    } catch (e) {
+      tableResult.error = e.message;
     }
 
-    const fileData = await file.arrayBuffer();
-    if (fileData.byteLength > 104857600) {
-      return json({ success: false, error: 'Máximo 100MB.' }, 400);
-    }
-
-    // Determine target folder
-    let folderId = url.searchParams.get('folder_id') || formData.get('folder_id') || request.headers.get('X-Folder-ID') || null;
-    let targetDriveFolderId = config.drive_folder_id;
-    const db = getDb(env);
-
-    if (folderId) {
-      const folderRecord = await db.select('folders', '*', { filter: { id: folderId }, single: true });
-      if (!folderRecord) return json({ success: false, error: 'Carpeta no encontrada' }, 400);
-      targetDriveFolderId = folderRecord.drive_folder_id;
-      if (!targetDriveFolderId) return json({ success: false, error: 'Carpeta sin ID de Drive' }, 400);
-    }
-
-    console.log('Target Drive folder:', targetDriveFolderId);
-
-    // Upload to Google Drive
-    const driveResult = await uploadFile(
-      config.drive_credentials, targetDriveFolderId, fileName, contentType, fileData
-    );
-    console.log('Drive OK:', driveResult.id);
-
-    // Build file record
-    const fileRecord = {
-      name: fileName,
-      type: contentType,
-      size: fileData.byteLength || driveResult.size || 0,
-      size_display: formatSize(fileData.byteLength || driveResult.size || 0),
-      type_display: getFileTypeDisplay(contentType),
-      icon: getFileIcon(contentType),
-      drive_id: driveResult.id,
-      download_url: driveResult.downloadUrl,
-      embed_url: getEmbedUrl(driveResult.id),
-      date_display: new Date().toLocaleDateString('es'),
-    };
-
-    if (folderId) fileRecord.folder_id = folderId;
-
-    // Optional: Cloudinary
-    if (config.cloudinary_cloud_name && isCloudinarySupported(contentType)) {
+    // Try to get row count
+    if (tableResult.exists) {
       try {
-        const cloudResult = await uploadToCloudinary(
-          config.cloudinary_cloud_name, config.cloudinary_upload_preset,
-          fileName, contentType, fileData
-        );
-        fileRecord.cloudinary_id = cloudResult.publicId;
-        fileRecord.cloudinary_url = cloudResult.url;
-        if (cloudResult.resourceType === 'video') {
-          fileRecord.thumbnail_url = getVideoThumbnail(config.cloudinary_cloud_name, cloudResult.publicId);
-          fileRecord.stream_url = getVideoStreamUrl(config.cloudinary_cloud_name, cloudResult.publicId);
-        }
-      } catch (cloudError) {
-        console.error('Cloudinary warning:', cloudError.message);
+        tableResult.count = await db.count(table);
+      } catch (e) {
+        tableResult.count_error = e.message;
       }
     }
 
-    // Insert into Supabase (IMMEDIATE — no KV delay!)
-    const inserted = await db.insert('files', fileRecord);
-    console.log('Saved to DB:', inserted?.id || 'ok');
-
-    return json({ success: true, file: inserted || fileRecord });
-
-  } catch (error) {
-    console.error('Upload error:', error);
-    return json({ success: false, error: 'Error al subir: ' + error.message }, 500);
+    results.tables[table] = tableResult;
   }
+
+  // Step 3: Test insert capability (insert + delete a test row)
+  try {
+    const testId = '__debug_test_' + Date.now();
+    try {
+      await db.insert('files', {
+        name: testId,
+        type: 'application/octet-stream',
+        size: 0,
+        size_display: '0 B',
+        type_display: 'Debug',
+        icon: '📄',
+        drive_id: testId,
+        download_url: 'https://example.com',
+        embed_url: 'https://example.com',
+        date_display: new Date().toLocaleDateString('es'),
+      });
+    } catch (insertErr) {
+      results.insert_test = { success: false, error: insertErr.message, step: 'insert' };
+      return json(results);
+    }
+
+    // Try to find and delete the test row
+    try {
+      // Find by name since we don't know the auto-generated id
+      const testRows = await db.select('files', 'id', { filter: { name: testId } });
+      if (testRows.length > 0) {
+        await db.remove('files', { id: testRows[0].id });
+        results.insert_test = { success: true, step: 'insert + delete', detail: 'Test row inserted and deleted successfully' };
+      } else {
+        results.insert_test = { success: true, step: 'insert', detail: 'Insert succeeded but could not find row to delete (may use different PK)' };
+      }
+    } catch (deleteErr) {
+      results.insert_test = { success: true, step: 'insert', warning: 'Insert works but delete test failed: ' + deleteErr.message };
+    }
+  } catch (e) {
+    results.insert_test = { success: false, error: e.message };
+  }
+
+  return json(results);
+}
+
+// GET /api/verify-tables — Quick check if required tables exist
+async function handleVerifyTables(request, env) {
+  const requiredTables = ['app_config', 'folders', 'files'];
+  const results = { tables: {}, all_ok: true, database: 'supabase' };
+
+  let db;
+  try {
+    db = getDb(env);
+  } catch (e) {
+    return json({ all_ok: false, database: 'supabase', connection_error: e.message });
+  }
+
+  for (const table of requiredTables) {
+    try {
+      await db.select(table, '*', { limit: 1 });
+      const count = await db.count(table);
+      results.tables[table] = { exists: true, rows: count };
+    } catch (e) {
+      results.tables[table] = { exists: false, error: e.message };
+      results.all_ok = false;
+    }
+  }
+
+  return json(results);
+}
+
+// ============================================
+// FILE HANDLERS
+// ============================================
+
+// POST /api/upload — Step-by-step upload with detailed error reporting
+async function handleUpload(request, env, url) {
+  // Step 1: Read config from Supabase
+  let config;
+  try {
+    config = await getConfig(env);
+  } catch (e) {
+    return json({ success: false, error: 'Error al leer configuración', step: 1, detail: e.message }, 500);
+  }
+
+  if (!config || !config.drive_credentials) {
+    return json({ success: false, error: 'App no configurada', step: 1, detail: 'No hay credenciales de Google Drive guardadas en la base de datos.' }, 400);
+  }
+
+  // Parse form data
+  let formData, file;
+  try {
+    formData = await request.formData();
+    file = formData.get('file');
+  } catch (e) {
+    return json({ success: false, error: 'Error al leer FormData', step: 1, detail: e.message }, 400);
+  }
+
+  if (!file) {
+    return json({ success: false, error: 'No se encontró el archivo (campo "file")', step: 1, detail: 'El FormData no contiene un campo llamado "file".' }, 400);
+  }
+
+  const fileName = file.name || 'unnamed';
+  const contentType = file.type || 'application/octet-stream';
+  console.log('Upload:', fileName, contentType);
+
+  // Step 2: Validate file type and size
+  if (!isAllowedType(contentType)) {
+    return json({ success: false, error: `Tipo no permitido: ${contentType}`, step: 2, detail: 'Usa MP3, MP4, ZIP o imágenes.' }, 400);
+  }
+
+  let fileData;
+  try {
+    fileData = await file.arrayBuffer();
+  } catch (e) {
+    return json({ success: false, error: 'Error al leer archivo', step: 2, detail: e.message }, 400);
+  }
+
+  if (fileData.byteLength > 104857600) {
+    return json({ success: false, error: 'Máximo 100MB.', step: 2, detail: `Tamaño del archivo: ${formatSize(fileData.byteLength)} (límite: 100MB)` }, 400);
+  }
+
+  if (fileData.byteLength === 0) {
+    return json({ success: false, error: 'Archivo vacío.', step: 2, detail: 'El archivo tiene 0 bytes.' }, 400);
+  }
+
+  // Step 3: Determine target Drive folder
+  let folderId = url.searchParams.get('folder_id') || formData.get('folder_id') || request.headers.get('X-Folder-ID') || null;
+  let targetDriveFolderId = config.drive_folder_id;
+  let db;
+
+  try {
+    db = getDb(env);
+  } catch (e) {
+    return json({ success: false, error: 'Error de conexión a Supabase', step: 3, detail: e.message }, 500);
+  }
+
+  if (folderId) {
+    try {
+      const folderRecord = await db.select('folders', '*', { filter: { id: folderId }, single: true });
+      if (!folderRecord) {
+        return json({ success: false, error: 'Carpeta no encontrada', step: 3, detail: `No existe carpeta con id "${folderId}" en la base de datos.` }, 404);
+      }
+      targetDriveFolderId = folderRecord.drive_folder_id;
+      if (!targetDriveFolderId) {
+        return json({ success: false, error: 'Carpeta sin ID de Drive', step: 3, detail: `La carpeta "${folderRecord.name}" (id: ${folderId}) no tiene drive_folder_id asociado.` }, 400);
+      }
+    } catch (e) {
+      return json({ success: false, error: 'Error al buscar carpeta', step: 3, detail: e.message }, 500);
+    }
+  }
+
+  if (!targetDriveFolderId) {
+    return json({ success: false, error: 'No hay carpeta de destino', step: 3, detail: 'No se definió drive_folder_id en la configuración y no se proporcionó folder_id.' }, 400);
+  }
+
+  console.log('Target Drive folder:', targetDriveFolderId);
+
+  // Step 4: Upload to Google Drive
+  let driveResult;
+  try {
+    driveResult = await uploadFile(
+      config.drive_credentials, targetDriveFolderId, fileName, contentType, fileData
+    );
+    console.log('Drive OK:', driveResult.id);
+  } catch (e) {
+    return json({ success: false, error: 'Error al subir a Google Drive', step: 4, detail: e.message }, 500);
+  }
+
+  if (!driveResult || !driveResult.id) {
+    return json({ success: false, error: 'Google Drive no devolvió ID de archivo', step: 4, detail: `Respuesta de Drive: ${JSON.stringify(driveResult || {})}` }, 500);
+  }
+
+  // Build file record
+  const fileRecord = {
+    name: fileName,
+    type: contentType,
+    size: fileData.byteLength || driveResult.size || 0,
+    size_display: formatSize(fileData.byteLength || driveResult.size || 0),
+    type_display: getFileTypeDisplay(contentType),
+    icon: getFileIcon(contentType),
+    drive_id: driveResult.id,
+    download_url: driveResult.downloadUrl,
+    embed_url: getEmbedUrl(driveResult.id),
+    date_display: new Date().toLocaleDateString('es'),
+  };
+
+  if (folderId) fileRecord.folder_id = folderId;
+
+  // Optional: Cloudinary (non-critical)
+  if (config.cloudinary_cloud_name && isCloudinarySupported(contentType)) {
+    try {
+      const cloudResult = await uploadToCloudinary(
+        config.cloudinary_cloud_name, config.cloudinary_upload_preset,
+        fileName, contentType, fileData
+      );
+      fileRecord.cloudinary_id = cloudResult.publicId;
+      fileRecord.cloudinary_url = cloudResult.url;
+      if (cloudResult.resourceType === 'video') {
+        fileRecord.thumbnail_url = getVideoThumbnail(config.cloudinary_cloud_name, cloudResult.publicId);
+        fileRecord.stream_url = getVideoStreamUrl(config.cloudinary_cloud_name, cloudResult.publicId);
+      }
+    } catch (cloudError) {
+      console.error('Cloudinary warning:', cloudError.message);
+    }
+  }
+
+  // Step 5: Insert into Supabase
+  let inserted;
+  try {
+    inserted = await db.insert('files', fileRecord);
+    console.log('Saved to DB:', inserted?.id || 'ok');
+  } catch (e) {
+    // The file is already on Google Drive — report but don't delete
+    return json({
+      success: false,
+      error: 'Error al guardar en la base de datos',
+      step: 5,
+      detail: e.message,
+      warning: `El archivo ya fue subido a Google Drive (id: ${driveResult.id}) pero no se pudo registrar en la base de datos. Esto es probablemente un problema de schema o permisos de Supabase.`,
+      drive_file_id: driveResult.id,
+      drive_download_url: driveResult.downloadUrl,
+    }, 500);
+  }
+
+  if (!inserted) {
+    return json({
+      success: false,
+      error: 'La base de datos no devolvió el registro insertado',
+      step: 5,
+      detail: 'db.insert() retornó null. El archivo pudo haberse insertado pero no se confirmó.',
+      drive_file_id: driveResult.id,
+    }, 500);
+  }
+
+  return json({ success: true, file: inserted || fileRecord });
 }
 
 // GET /api/files
