@@ -13,3 +13,6 @@ SUPABASE_SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmF
 # Firebase Authentication
 FIREBASE_PROJECT_ID = "cloud-media-a2e1f"
 FIREBASE_API_KEY = "AIzaSyDcSe4n7pzazgKMPmy09HVkLOmAjF46ogM"
+FIREBASE_STORAGE_BUCKET = "cloud-media-a2e1f.firebasestorage.app"
+FIREBASE_MESSAGING_SENDER_ID = "729146009840"
+FIREBASE_APP_ID = "1:729146009840:web:51aeeae9ed7aebaccb3a35"

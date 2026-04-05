@@ -32,7 +32,7 @@
 import { hashPassword, generateId, formatSize, getFileIcon, isAllowedType } from './jwt.js';
 import { uploadFile, deleteFile as deleteDriveFile, getDownloadUrl, getEmbedUrl, createFolder as createDriveFolder, deleteFolder as deleteDriveFolder, refreshOAuth2Token, exchangeCodeForTokens, buildOAuth2Url, getDriveAccessToken, verifyCredentials } from './google-drive.js';
 import { isCloudinarySupported, uploadFile as uploadToCloudinary, getVideoThumbnail, getVideoStreamUrl } from './cloudinary-client.js';
-import { setupPage, dashboardPage, apiDocsPage } from './templates.js';
+import { setupPage, dashboardPage, apiDocsPage, loginPage } from './templates.js';
 import { createClient } from './supabase.js';
 import { verifyFirebaseToken, extractFirebaseToken, authenticateRequest } from './firebase-auth.js';
 
@@ -237,28 +237,47 @@ async function handleFirebaseConfig(request, env) {
     project_id: env.FIREBASE_PROJECT_ID || null,
     api_key: env.FIREBASE_API_KEY || null,
     auth_domain: env.FIREBASE_PROJECT_ID ? `${env.FIREBASE_PROJECT_ID}.firebaseapp.com` : null,
+    storage_bucket: env.FIREBASE_STORAGE_BUCKET || null,
+    messaging_sender_id: env.FIREBASE_MESSAGING_SENDER_ID || null,
+    app_id: env.FIREBASE_APP_ID || null,
   };
   return json(config);
 }
 
-// GET / — Dashboard or Setup
+// GET / — Dashboard or Setup (or Login if Firebase is configured and user is not authenticated)
 async function handleIndex(request, env) {
   if (isApiRequest(request)) return handleStatus(request, env);
 
   // Check Firebase auth status for frontend
   const { user, firebaseConfigured } = await authenticateRequest(request, env);
 
+  // If Firebase is configured, require authentication
+  if (firebaseConfigured && !user) {
+    // Build Firebase config for the login page
+    const loginFirebaseConfig = {
+      apiKey: env.FIREBASE_API_KEY || null,
+      authDomain: env.FIREBASE_PROJECT_ID ? `${env.FIREBASE_PROJECT_ID}.firebaseapp.com` : null,
+      projectId: env.FIREBASE_PROJECT_ID || null,
+      storageBucket: env.FIREBASE_STORAGE_BUCKET || null,
+      messagingSenderId: env.FIREBASE_MESSAGING_SENDER_ID || null,
+      appId: env.FIREBASE_APP_ID || null,
+    };
+    return html(loginPage(loginFirebaseConfig));
+  }
+
   let config = null;
   try {
     config = await getConfig(env);
   } catch (e) {
-    // Supabase not configured yet — show setup page
+    // Supabase not configured yet — show setup page (user is authenticated if Firebase is on)
     console.error('getConfig error:', e.message);
     return html(setupPage(null, { firebaseConfigured, user }));
   }
 
-  if (!config || (!config.drive_credentials && !config.oauth2_refresh_token && !firebaseConfigured)) {
-    return html(setupPage(config, { firebaseConfigured, user }));
+  // If Firebase is configured and user is authenticated, show dashboard even without Drive credentials
+  // Drive credentials are optional now
+  if (!config) {
+    config = { folders: [] };
   }
 
   const db = getDb(env);
@@ -271,9 +290,15 @@ async function handleIndex(request, env) {
     console.error('DB query error:', e.message);
   }
 
-  if (folders.length === 0) {
+  if (folders.length === 0 && !firebaseConfigured) {
+    // No Firebase, no folders — show setup
     config.folders = [];
     return html(setupPage(config, { firebaseConfigured, user }));
+  }
+
+  if (folders.length === 0 && firebaseConfigured) {
+    // Firebase configured, authenticated, but no folders — still show dashboard
+    // (setup accessible via settings icon)
   }
 
   // Attach folders to config for setup page compatibility
@@ -290,11 +315,24 @@ async function handleIndex(request, env) {
   return html(dashboardPage(config, files, folders, { firebaseConfigured, user }));
 }
 
-// GET /setup — Configuration page
+// GET /setup — Configuration page (requires authentication if Firebase is configured)
 async function handleSetup(request, env) {
   if (isApiRequest(request)) return handleStatus(request, env);
 
   const { user, firebaseConfigured } = await authenticateRequest(request, env);
+
+  // If Firebase is configured, require authentication to access setup
+  if (firebaseConfigured && !user) {
+    const loginFirebaseConfig = {
+      apiKey: env.FIREBASE_API_KEY || null,
+      authDomain: env.FIREBASE_PROJECT_ID ? `${env.FIREBASE_PROJECT_ID}.firebaseapp.com` : null,
+      projectId: env.FIREBASE_PROJECT_ID || null,
+      storageBucket: env.FIREBASE_STORAGE_BUCKET || null,
+      messagingSenderId: env.FIREBASE_MESSAGING_SENDER_ID || null,
+      appId: env.FIREBASE_APP_ID || null,
+    };
+    return html(loginPage(loginFirebaseConfig));
+  }
 
   let config = null;
   try {
@@ -371,7 +409,6 @@ async function handleSaveConfig(request, env) {
     const folderList = folders || [];
 
     // Firebase Auth is sufficient for auth - don't require drive creds or OAuth2
-    const hasFirebase = !!env.FIREBASE_PROJECT_ID;
     if (folderList.length === 0 && !existingConfig && !hasFirebase) {
       return json({ success: false, error: 'Agrega al menos una carpeta de Google Drive' }, 400);
     }

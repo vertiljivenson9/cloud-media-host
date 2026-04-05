@@ -529,50 +529,6 @@ ${BASE_CSS}
     <p>${isConfigured ? 'Configuracion del workspace' : 'Almacenamiento gratuito sobre Google Drive + Cloudflare'}</p>
   </div>
 
-  ${authState?.firebaseConfigured && !authState?.user ? `
-  <div class="card setup-card" style="border-color:var(--accent);background:linear-gradient(135deg, var(--bg-surface) 0%, rgba(249,115,22,0.05) 100%)">
-    <h2>
-      <span style="color:var(--accent)">${IC.lock}</span>
-      Iniciar sesion con Google
-    </h2>
-    <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;margin-bottom:16px">
-      Inicia sesion con tu cuenta de Google para acceder al panel de administracion.
-      Firebase Auth protege tu aplicacion con autenticacion segura de Google.
-    </p>
-    <button class="btn btn-primary btn-block" id="googleSignInBtn" type="button" style="gap:10px;padding:12px 16px;font-size:15px">
-      <svg width="20" height="20" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#fff"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#fff"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#fff"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#fff"/></svg>
-      Iniciar sesion con Google
-    </button>
-  </div>
-
-  <script>
-  (function() {
-    var btn = document.getElementById('googleSignInBtn');
-    if (!btn) return;
-    btn.addEventListener('click', function() {
-      if (window.__firebaseAuth) {
-        var provider = new firebase.auth.GoogleAuthProvider();
-        provider.addScope('https://www.googleapis.com/auth/drive');
-        window.__firebaseAuth.signInWithPopup(provider).then(function(result) {
-          // Capture Google OAuth access token for Drive uploads
-          if (result.credential && result.credential.accessToken) {
-            window.__googleAccessToken = result.credential.accessToken;
-            console.log('Google Drive access token obtained after sign-in');
-          }
-          setTimeout(function() { location.reload(); }, 500);
-        }).catch(function(e) {
-          if (e.code !== 'auth/popup-closed-by-user') {
-            alert('Error al iniciar sesion: ' + e.message);
-          }
-        });
-      } else {
-        alert('Firebase no esta configurado. Agrega FIREBASE_PROJECT_ID y FIREBASE_API_KEY en wrangler.toml.');
-      }
-    });
-  })();
-  </script>
-  ` : ''}
-
   <div class="card setup-card creds-section ${isConfigured ? 'is-collapsed' : ''}">
     <h2>
       <span style="color:var(--accent)">${IC.hardDrive}</span>
@@ -1089,6 +1045,402 @@ ${BASE_CSS}
 
 
 // ============================================
+// LOGIN PAGE
+// ============================================
+export function loginPage(firebaseConfig) {
+  return `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Iniciar sesion - Cloud Media Host</title>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+<style>
+${BASE_CSS}
+  body {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 20px;
+  }
+  .login-container {
+    max-width: 420px; width: 100%;
+  }
+  .login-logo {
+    text-align: center; margin-bottom: 32px;
+  }
+  .login-logo svg { color: var(--accent); margin-bottom: 12px; }
+  .login-logo h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+  .login-logo p { color: var(--text-muted); font-size: 14px; margin-top: 4px; }
+  .login-card {
+    padding: 28px;
+  }
+  .login-card h2 {
+    font-size: 15px; font-weight: 600; margin-bottom: 20px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .form-group { margin-bottom: 16px; }
+  .form-group label {
+    display: block; font-size: 13px; font-weight: 500;
+    color: var(--text-secondary); margin-bottom: 6px;
+  }
+  .form-group label span.icon-label { display: inline-flex; align-items: center; gap: 4px; }
+  .login-error {
+    background: var(--danger-subtle); color: var(--danger);
+    border: 1px solid rgba(239,68,68,0.2); border-radius: var(--radius-md);
+    padding: 10px 14px; font-size: 13px; margin-bottom: 16px;
+    display: none;
+  }
+  .login-error.visible { display: block; }
+  .login-success {
+    background: var(--success-subtle); color: var(--success);
+    border: 1px solid rgba(34,197,94,0.2); border-radius: var(--radius-md);
+    padding: 10px 14px; font-size: 13px; margin-bottom: 16px;
+    display: none;
+  }
+  .login-success.visible { display: block; }
+  .login-info {
+    background: var(--info-subtle); color: var(--info);
+    border: 1px solid rgba(59,130,246,0.2); border-radius: var(--radius-md);
+    padding: 10px 14px; font-size: 13px; margin-bottom: 16px;
+    display: none;
+  }
+  .login-info.visible { display: block; }
+  .divider {
+    display: flex; align-items: center; gap: 12px;
+    margin: 20px 0; color: var(--text-muted); font-size: 13px;
+  }
+  .divider::before, .divider::after {
+    content: ''; flex: 1; height: 1px; background: var(--border);
+  }
+  .google-btn {
+    width: 100%; display: flex; align-items: center; justify-content: center;
+    gap: 10px; padding: 12px 16px; border: 1px solid var(--border);
+    border-radius: var(--radius-md); background: var(--bg-surface);
+    color: var(--text-primary); font-family: var(--font); font-size: 14px;
+    font-weight: 500; cursor: pointer; transition: all var(--transition);
+  }
+  .google-btn:hover {
+    background: var(--bg-surface-2); border-color: var(--border-hover);
+  }
+  .google-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .toggle-link {
+    text-align: center; margin-top: 16px; font-size: 13px; color: var(--text-muted);
+  }
+  .toggle-link a { color: var(--accent); cursor: pointer; font-weight: 500; }
+  .toggle-link a:hover { color: var(--accent-hover); }
+  .reset-link {
+    text-align: center; margin-top: 12px; font-size: 13px; color: var(--text-muted);
+  }
+  .reset-link a { color: var(--accent); cursor: pointer; }
+  .reset-link a:hover { color: var(--accent-hover); }
+  .footer-text {
+    text-align: center; margin-top: 24px; font-size: 12px; color: var(--text-muted);
+  }
+  .spinner {
+    display: inline-block; width: 16px; height: 16px;
+    border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff;
+    border-radius: 50%; animation: spin 0.6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="login-container">
+  <div class="login-logo">
+    ${IC.cloud}
+    <h1>Cloud Media Host</h1>
+    <p>Almacenamiento gratuito sobre Google Drive + Cloudflare</p>
+  </div>
+
+  <div class="card login-card">
+    <div class="login-error" id="loginError"></div>
+    <div class="login-success" id="loginSuccess"></div>
+    <div class="login-info" id="loginInfo"></div>
+
+    <!-- Email/Password Form -->
+    <div id="emailForm">
+      <h2>
+        <span style="color:var(--accent)">${IC.lock}</span>
+        <span id="formTitle">Iniciar sesion</span>
+      </h2>
+
+      <div class="form-group">
+        <label><span class="icon-label">${IC.search} Correo electronico</span></label>
+        <input type="text" id="emailInput" placeholder="tu@correo.com" autocomplete="email">
+      </div>
+
+      <div class="form-group">
+        <label><span class="icon-label">${IC.lock} Contrasena</span></label>
+        <input type="password" id="passwordInput" placeholder="Tu contrasena" autocomplete="${'current-password'}">
+      </div>
+
+      <button class="btn btn-primary btn-block" id="emailSubmitBtn" type="button">
+        <span id="emailSubmitText">Iniciar sesion</span>
+      </button>
+
+      <div class="toggle-link" id="toggleSection">
+        <span id="toggleText">No tienes cuenta?</span> <a id="toggleLink">Crear cuenta</a>
+      </div>
+
+      <div class="reset-link" id="resetSection">
+        <a id="resetLink">Olvidaste tu contrasena?</a>
+      </div>
+    </div>
+
+    <!-- Password Reset Form -->
+    <div id="resetForm" style="display:none">
+      <h2>
+        <span style="color:var(--accent)">${IC.lock}</span>
+        Restablecer contrasena
+      </h2>
+
+      <div class="form-group">
+        <label><span class="icon-label">${IC.search} Correo electronico</span></label>
+        <input type="text" id="resetEmailInput" placeholder="tu@correo.com" autocomplete="email">
+      </div>
+
+      <button class="btn btn-primary btn-block" id="resetSubmitBtn" type="button">
+        <span id="resetSubmitText">Enviar enlace de restablecimiento</span>
+      </button>
+
+      <div class="toggle-link">
+        <a id="backToLoginLink">Volver a iniciar sesion</a>
+      </div>
+    </div>
+
+    <!-- Divider -->
+    <div class="divider">o continua con</div>
+
+    <!-- Google Sign-In -->
+    <button class="google-btn" id="googleSignInBtn" type="button">
+      <svg width="20" height="20" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+      Iniciar sesion con Google
+    </button>
+  </div>
+
+  <div class="footer-text">
+    powered by Firebase Auth
+  </div>
+</div>
+
+<script>
+(function() {
+  // Initialize Firebase with config from server
+  var firebaseConfig = ${JSON.stringify(firebaseConfig)};
+  if (!firebaseConfig.apiKey) {
+    document.getElementById('loginError').textContent = 'Firebase no esta configurado. Agrega FIREBASE_PROJECT_ID y FIREBASE_API_KEY en wrangler.toml.';
+    document.getElementById('loginError').classList.add('visible');
+    return;
+  }
+
+  firebase.initializeApp({
+    apiKey: firebaseConfig.apiKey,
+    authDomain: firebaseConfig.authDomain,
+    projectId: firebaseConfig.projectId,
+    storageBucket: firebaseConfig.storageBucket || '',
+    messagingSenderId: firebaseConfig.messagingSenderId || '',
+    appId: firebaseConfig.appId || ''
+  });
+
+  var auth = firebase.auth();
+  auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+
+  // Check if already logged in
+  auth.onAuthStateChanged(function(user) {
+    if (user) {
+      // Already authenticated, redirect to dashboard
+      window.location.href = '/';
+    }
+  });
+
+  // DOM elements
+  var emailInput = document.getElementById('emailInput');
+  var passwordInput = document.getElementById('passwordInput');
+  var emailSubmitBtn = document.getElementById('emailSubmitBtn');
+  var emailSubmitText = document.getElementById('emailSubmitText');
+  var formTitle = document.getElementById('formTitle');
+  var toggleText = document.getElementById('toggleText');
+  var toggleLink = document.getElementById('toggleLink');
+  var resetLink = document.getElementById('resetLink');
+  var resetSection = document.getElementById('resetSection');
+  var resetForm = document.getElementById('resetForm');
+  var emailForm = document.getElementById('emailForm');
+  var resetEmailInput = document.getElementById('resetEmailInput');
+  var resetSubmitBtn = document.getElementById('resetSubmitBtn');
+  var resetSubmitText = document.getElementById('resetSubmitText');
+  var backToLoginLink = document.getElementById('backToLoginLink');
+  var googleSignInBtn = document.getElementById('googleSignInBtn');
+  var loginError = document.getElementById('loginError');
+  var loginSuccess = document.getElementById('loginSuccess');
+  var loginInfo = document.getElementById('loginInfo');
+
+  var isSignUp = false;
+
+  function showError(msg) {
+    loginError.textContent = msg;
+    loginError.classList.add('visible');
+    loginSuccess.classList.remove('visible');
+    loginInfo.classList.remove('visible');
+  }
+  function showSuccess(msg) {
+    loginSuccess.textContent = msg;
+    loginSuccess.classList.add('visible');
+    loginError.classList.remove('visible');
+    loginInfo.classList.remove('visible');
+  }
+  function showInfo(msg) {
+    loginInfo.textContent = msg;
+    loginInfo.classList.add('visible');
+    loginError.classList.remove('visible');
+    loginSuccess.classList.remove('visible');
+  }
+  function clearMessages() {
+    loginError.classList.remove('visible');
+    loginSuccess.classList.remove('visible');
+    loginInfo.classList.remove('visible');
+  }
+  function setLoading(btn, textEl, loading) {
+    if (loading) {
+      btn.disabled = true;
+      textEl.innerHTML = '<span class="spinner"></span> Cargando...';
+    } else {
+      btn.disabled = false;
+    }
+  }
+
+  // Toggle between Sign In and Sign Up
+  toggleLink.addEventListener('click', function() {
+    isSignUp = !isSignUp;
+    clearMessages();
+    if (isSignUp) {
+      formTitle.textContent = 'Crear cuenta';
+      emailSubmitText.textContent = 'Crear cuenta';
+      toggleText.textContent = 'Ya tienes cuenta?';
+      toggleLink.textContent = 'Iniciar sesion';
+      resetSection.style.display = 'none';
+    } else {
+      formTitle.textContent = 'Iniciar sesion';
+      emailSubmitText.textContent = 'Iniciar sesion';
+      toggleText.textContent = 'No tienes cuenta?';
+      toggleLink.textContent = 'Crear cuenta';
+      resetSection.style.display = '';
+    }
+  });
+
+  // Email/Password submit
+  emailSubmitBtn.addEventListener('click', function() {
+    var email = emailInput.value.trim();
+    var password = passwordInput.value;
+
+    if (!email) { showError('Ingresa tu correo electronico.'); return; }
+    if (!password) { showError('Ingresa tu contrasena.'); return; }
+    if (password.length < 6) { showError('La contrasena debe tener al menos 6 caracteres.'); return; }
+
+    clearMessages();
+    setLoading(emailSubmitBtn, emailSubmitText, true);
+
+    var promise;
+    if (isSignUp) {
+      promise = auth.createUserWithEmailAndPassword(email, password);
+    } else {
+      promise = auth.signInWithEmailAndPassword(email, password);
+    }
+
+    promise.then(function(result) {
+      // onAuthStateChanged will handle the redirect
+    }).catch(function(e) {
+      setLoading(emailSubmitBtn, emailSubmitText, false);
+      var code = e.code || '';
+      if (code === 'auth/user-not-found') showError('No existe una cuenta con este correo.');
+      else if (code === 'auth/wrong-password') showError('Contrasena incorrecta.');
+      else if (code === 'auth/email-already-in-use') showError('Este correo ya esta registrado. Intenta iniciar sesion.');
+      else if (code === 'auth/weak-password') showError('La contrasena es muy debil (minimo 6 caracteres).');
+      else if (code === 'auth/invalid-email') showError('Correo electronico invalido.');
+      else if (code === 'auth/too-many-requests') showError('Demasiados intentos. Intenta de nuevo mas tarde.');
+      else if (code === 'auth/invalid-credential') showError('Correo o contrasena incorrectos.');
+      else showError('Error: ' + e.message);
+    });
+  });
+
+  // Password reset
+  resetLink.addEventListener('click', function() {
+    emailForm.style.display = 'none';
+    resetForm.style.display = 'block';
+    if (emailInput.value) resetEmailInput.value = emailInput.value;
+    clearMessages();
+  });
+
+  backToLoginLink.addEventListener('click', function() {
+    resetForm.style.display = 'none';
+    emailForm.style.display = 'block';
+    clearMessages();
+  });
+
+  resetSubmitBtn.addEventListener('click', function() {
+    var email = resetEmailInput.value.trim();
+    if (!email) { showError('Ingresa tu correo electronico.'); return; }
+    clearMessages();
+    setLoading(resetSubmitBtn, resetSubmitText, true);
+
+    auth.sendPasswordResetEmail(email).then(function() {
+      setLoading(resetSubmitBtn, resetSubmitText, false);
+      showSuccess('Se envio un enlace de restablecimiento a ' + email + '. Revisa tu bandeja de entrada.');
+    }).catch(function(e) {
+      setLoading(resetSubmitBtn, resetSubmitText, false);
+      var code = e.code || '';
+      if (code === 'auth/user-not-found') showError('No existe una cuenta con este correo.');
+      else if (code === 'auth/invalid-email') showError('Correo electronico invalido.');
+      else if (code === 'auth/too-many-requests') showError('Demasiados intentos. Intenta de nuevo mas tarde.');
+      else showError('Error: ' + e.message);
+    });
+  });
+
+  // Google Sign-In
+  googleSignInBtn.addEventListener('click', function() {
+    clearMessages();
+    setLoading(googleSignInBtn, googleSignInBtn, true);
+
+    var provider = new firebase.auth.GoogleAuthProvider();
+    provider.addScope('https://www.googleapis.com/auth/drive');
+
+    auth.signInWithPopup(provider).then(function(result) {
+      // Store Google access token for Drive uploads
+      if (result.credential && result.credential.accessToken) {
+        window.__googleAccessToken = result.credential.accessToken;
+      }
+      if (result.additionalUserInfo && result.additionalUserInfo.profile) {
+        window.__googleUserEmail = result.additionalUserInfo.profile.email;
+        window.__googleUserName = result.additionalUserInfo.profile.name;
+      }
+      // onAuthStateChanged will handle the redirect
+    }).catch(function(e) {
+      setLoading(googleSignInBtn, googleSignInBtn, false);
+      if (e.code === 'auth/popup-closed-by-user') return;
+      if (e.code === 'auth/cancelled-popup-request') return;
+      if (e.code === 'auth/popup-blocked') showError('El popup fue bloqueado por el navegador. Permite popups para este sitio.');
+      else showError('Error al iniciar sesion con Google: ' + e.message);
+    });
+  });
+
+  // Allow Enter key to submit
+  passwordInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') emailSubmitBtn.click();
+  });
+  emailInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') passwordInput.focus();
+  });
+  resetEmailInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') resetSubmitBtn.click();
+  });
+})();
+</script>
+</body>
+</html>`;
+}
+
+
+// ============================================
 // DASHBOARD
 // ============================================
 export function dashboardPage(config, files = [], folders = [], authState) {
@@ -1407,54 +1759,6 @@ ${BASE_CSS}
     <a href="/api/docs" target="_blank" class="btn-icon-only" title="API Docs">${IC.book}</a>
   </div>
 </div>
-
-${authState?.firebaseConfigured && !authState?.user ? `
-<div style="max-width:920px;margin:20px auto 0;padding:0 24px">
-  <div class="card" style="border-color:var(--accent);background:linear-gradient(135deg, var(--bg-surface) 0%, rgba(249,115,22,0.05) 100%);text-align:center;padding:32px">
-    <div style="margin-bottom:16px;color:var(--accent)">${IC.lock}</div>
-    <h2 style="font-size:18px;font-weight:600;margin-bottom:8px">Iniciar sesion con Google</h2>
-    <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;margin-bottom:20px">
-      Inicia sesion con tu cuenta de Google para acceder al panel de administracion.
-      Firebase Auth protege tu aplicacion con autenticacion segura de Google.
-    </p>
-    <button class="btn btn-primary" id="googleSignInBtn" type="button" style="gap:10px;padding:12px 24px;font-size:15px;margin:0 auto">
-      <svg width="20" height="20" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#fff"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#fff"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#fff"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#fff"/></svg>
-      Iniciar sesion con Google
-    </button>
-  </div>
-</div>
-
-<script>
-(function() {
-  var btn = document.getElementById('googleSignInBtn');
-  if (!btn) return;
-  btn.addEventListener('click', function() {
-    if (window.__firebaseAuth) {
-      var provider = new firebase.auth.GoogleAuthProvider();
-      provider.addScope('https://www.googleapis.com/auth/drive');
-      window.__firebaseAuth.signInWithPopup(provider).then(function(result) {
-        // Capture Google OAuth access token for Drive uploads
-        if (result.credential && result.credential.accessToken) {
-          window.__googleAccessToken = result.credential.accessToken;
-          console.log('Google Drive access token obtained after sign-in');
-        }
-        if (result.additionalUserInfo && result.additionalUserInfo.profile) {
-          window.__googleUserEmail = result.additionalUserInfo.profile.email;
-          window.__googleUserName = result.additionalUserInfo.profile.name;
-        }
-        setTimeout(function() { location.reload(); }, 500);
-      }).catch(function(e) {
-        if (e.code !== 'auth/popup-closed-by-user') {
-          alert('Error al iniciar sesion: ' + e.message);
-        }
-      });
-    } else {
-      alert('Firebase no esta configurado. Agrega FIREBASE_PROJECT_ID y FIREBASE_API_KEY en wrangler.toml.');
-    }
-  });
-})();
-</script>
-` : ''}
 
 <main class="app-main">
   <div class="upload-zone" id="dropZone">
