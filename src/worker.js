@@ -2,29 +2,33 @@
  * Cloud Media Host - Main Worker
  * 
  * Routes:
- *   GET  /                 → Dashboard HTML (or Setup page if not configured)
- *   GET  /api/docs         → API Documentation
- *   GET  /api/status       → System status
- *   POST /api/config       → Save credentials
- *   GET  /api/config       → Get current config (admin only)
- *   DELETE /api/config     → Reset everything (admin only)
- *   POST /api/upload       → Upload file
- *   GET  /api/files        → List all files
- *   GET  /api/files/:id    → Get file info
+ *   GET  /                     → Dashboard HTML (or Setup page if not configured)
+ *   GET  /api/docs             → API Documentation
+ *   GET  /api/status           → System status
+ *   POST /api/config           → Save credentials
+ *   GET  /api/config           → Get current config (admin only)
+ *   DELETE /api/config         → Reset everything (admin only)
+ *   POST /api/upload           → Upload file (optional ?folder_id=xxx)
+ *   GET  /api/files            → List all files
+ *   GET  /api/files/:id        → Get file info
  *   GET  /api/files/:id/download → Download file
- *   DELETE /api/files/:id  → Delete file (admin only)
- *   DELETE /api/files      → Delete all files (admin only)
+ *   DELETE /api/files/:id      → Delete file (admin only)
+ *   DELETE /api/files          → Delete all files (admin only)
+ *   POST /api/folders          → Create a new folder/workspace
+ *   GET  /api/folders          → List all folders with file counts
+ *   GET  /api/folders/:id/files → List files in a specific folder
+ *   DELETE /api/folders/:id    → Delete a folder and all its files
  */
 
 import { hashPassword, generateId, formatSize, getFileIcon, isAllowedType } from './jwt.js';
-import { uploadFile, deleteFile as deleteDriveFile, getDownloadUrl, getEmbedUrl } from './google-drive.js';
+import { uploadFile, deleteFile as deleteDriveFile, getDownloadUrl, getEmbedUrl, createFolder as createDriveFolder, deleteFolder as deleteDriveFolder } from './google-drive.js';
 import { isCloudinarySupported, uploadFile as uploadToCloudinary, getVideoThumbnail, getVideoStreamUrl } from './cloudinary-client.js';
 import { setupPage, dashboardPage, apiDocsPage } from './templates.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, X-Admin-Key'
+  'Access-Control-Allow-Headers': 'Content-Type, X-Admin-Key, X-Folder-ID'
 };
 
 export default {
@@ -51,7 +55,17 @@ export default {
           if (request.method === 'GET') return handleGetConfig(request, env);
           break;
         case '/api/upload':
-          if (request.method === 'POST') return handleUpload(request, env);
+          if (request.method === 'POST') return handleUpload(request, env, url);
+          break;
+        case '/api/folders':
+          if (request.method === 'POST') return handleCreateFolder(request, env);
+          if (request.method === 'GET') return handleListFolders(request, env);
+          break;
+        case '/api/folders/:id':
+          if (request.method === 'DELETE') return handleDeleteFolder(request, env, route.params.id);
+          break;
+        case '/api/folders/:id/files':
+          if (request.method === 'GET') return handleListFolderFiles(request, env, route.params.id);
           break;
         case '/api/files':
           if (request.method === 'GET') return handleListFiles(request, env);
@@ -80,12 +94,28 @@ export default {
 // ============================================
 function matchRoute(path) {
   // Exact routes first
-  const exact = ['/', '/api/docs', '/api/status', '/api/config', '/api/upload', '/api/files'];
+  const exact = ['/', '/api/docs', '/api/status', '/api/config', '/api/upload', '/api/files', '/api/folders'];
   for (const p of exact) {
     if (path === p) return { pattern: p, params: {} };
   }
 
-  // Parameterized routes
+  // /api/folders/:id/files — must match before /api/folders/:id
+  if (path.startsWith('/api/folders/') && path.endsWith('/files')) {
+    const parts = path.split('/');
+    if (parts.length === 5) {
+      return { pattern: '/api/folders/:id/files', params: { id: parts[3] } };
+    }
+  }
+
+  // /api/folders/:id
+  if (path.startsWith('/api/folders/')) {
+    const parts = path.split('/');
+    if (parts.length === 4) {
+      return { pattern: '/api/folders/:id', params: { id: parts[3] } };
+    }
+  }
+
+  // Parameterized routes for files
   if (path.startsWith('/api/files/')) {
     const parts = path.split('/');
     if (parts.length === 5 && parts[4] === 'download') {
@@ -163,10 +193,19 @@ async function handleIndex(request, env) {
     if (fileData) files.push(fileData);
   }
 
-  // Sort by newest first
+  // Load folders
+  const folderIds = await env.MEDIA_KV.get('app:folders', 'json') || [];
+  const folders = [];
+  for (const id of folderIds) {
+    const folderData = await env.MEDIA_KV.get(`folder:${id}`, 'json');
+    if (folderData) folders.push(folderData);
+  }
+  folders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  // Sort files by newest first
   files.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-  return html(dashboardPage(config, files));
+  return html(dashboardPage(config, files, folders));
 }
 
 // GET /api/docs — API documentation
@@ -179,6 +218,7 @@ async function handleApiDocs(request, env, url) {
 async function handleStatus(request, env) {
   const config = await getConfig(env);
   const fileIds = await env.MEDIA_KV.get('app:files', 'json') || [];
+  const folderIds = await env.MEDIA_KV.get('app:folders', 'json') || [];
 
   return json({
     configured: !!(config && config.drive_credentials),
@@ -187,6 +227,7 @@ async function handleStatus(request, env) {
       cloudinary: !!(config?.cloudinary_cloud_name)
     },
     file_count: fileIds.length,
+    folder_count: folderIds.length,
     has_admin_password: !!config?.admin_password_hash
   });
 }
@@ -237,6 +278,11 @@ async function handleSaveConfig(request, env) {
     if (!existingFiles) {
       await env.MEDIA_KV.put('app:files', JSON.stringify([]));
     }
+    // Initialize folder list
+    const existingFolders = await env.MEDIA_KV.get('app:folders', 'json');
+    if (!existingFolders) {
+      await env.MEDIA_KV.put('app:folders', JSON.stringify([]));
+    }
 
     return json({ success: true, message: 'Configuración guardada correctamente' });
 
@@ -283,8 +329,203 @@ async function handleResetConfig(request, env) {
   return json({ success: true, message: 'Configuración eliminada. La app volverá al estado inicial.' });
 }
 
-// POST /api/upload — Upload a file
-async function handleUpload(request, env) {
+// ============================================
+// FOLDER HANDLERS
+// ============================================
+
+// POST /api/folders — Create a new folder/workspace
+async function handleCreateFolder(request, env) {
+  const config = await getConfig(env);
+  if (!config || !config.drive_credentials) {
+    return json({ success: false, error: 'App no configurada. Ve a / para configurar.' }, 400);
+  }
+
+  try {
+    const body = await request.json();
+    const folderName = (body.name || '').trim();
+
+    if (!folderName) {
+      return json({ success: false, error: 'El nombre de la carpeta es obligatorio' }, 400);
+    }
+
+    if (folderName.length > 100) {
+      return json({ success: false, error: 'El nombre de la carpeta es demasiado largo (max 100 caracteres)' }, 400);
+    }
+
+    // Create folder in Google Drive
+    const driveResult = await createDriveFolder(
+      config.drive_credentials,
+      config.drive_folder_id,
+      folderName
+    );
+
+    // Generate folder ID for our system
+    const folderId = generateId();
+
+    // Build folder record
+    const folderRecord = {
+      id: folderId,
+      name: folderName,
+      drive_id: driveResult.id,
+      drive_link: driveResult.webViewLink,
+      created_at: new Date().toISOString(),
+      file_count: 0
+    };
+
+    // Save folder record to KV
+    await env.MEDIA_KV.put(`folder:${folderId}`, JSON.stringify(folderRecord));
+
+    // Add to folder list
+    const foldersList = await env.MEDIA_KV.get('app:folders', 'json') || [];
+    foldersList.unshift(folderId);
+    await env.MEDIA_KV.put('app:folders', JSON.stringify(foldersList));
+
+    return json({
+      success: true,
+      folder: folderRecord
+    });
+
+  } catch (error) {
+    console.error('Create folder error:', error);
+    return json({ success: false, error: 'Error al crear carpeta: ' + error.message }, 500);
+  }
+}
+
+// GET /api/folders — List all folders with file counts
+async function handleListFolders(request, env) {
+  const config = await getConfig(env);
+  if (!config) {
+    return json({ success: false, error: 'App no configurada' }, 400);
+  }
+
+  const folderIds = await env.MEDIA_KV.get('app:folders', 'json') || [];
+  const fileIds = await env.MEDIA_KV.get('app:files', 'json') || [];
+
+  // Count files per folder
+  const fileCountMap = {};
+  for (const fid of fileIds) {
+    const fileData = await env.MEDIA_KV.get(`file:${fid}`, 'json');
+    if (fileData && fileData.folder_id) {
+      fileCountMap[fileData.folder_id] = (fileCountMap[fileData.folder_id] || 0) + 1;
+    }
+  }
+
+  const folders = [];
+  for (const id of folderIds) {
+    const folderData = await env.MEDIA_KV.get(`folder:${id}`, 'json');
+    if (folderData) {
+      folderData.file_count = fileCountMap[id] || 0;
+      folders.push(folderData);
+    }
+  }
+
+  folders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  return json({ folders, total: folders.length });
+}
+
+// GET /api/folders/:id/files — List files in a specific folder
+async function handleListFolderFiles(request, env, folderId) {
+  const config = await getConfig(env);
+  if (!config) {
+    return json({ success: false, error: 'App no configurada' }, 400);
+  }
+
+  // Verify folder exists
+  const folderData = await env.MEDIA_KV.get(`folder:${folderId}`, 'json');
+  if (!folderData) {
+    return json({ success: false, error: 'Carpeta no encontrada' }, 404);
+  }
+
+  // Get all files and filter by folder_id
+  const fileIds = await env.MEDIA_KV.get('app:files', 'json') || [];
+  const files = [];
+
+  for (const id of fileIds) {
+    const fileData = await env.MEDIA_KV.get(`file:${id}`, 'json');
+    if (fileData && fileData.folder_id === folderId) {
+      files.push(fileData);
+    }
+  }
+
+  files.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  return json({
+    folder: { id: folderData.id, name: folderData.name },
+    files,
+    total: files.length
+  });
+}
+
+// DELETE /api/folders/:id — Delete a folder and all its files
+async function handleDeleteFolder(request, env, folderId) {
+  const isAdmin = await verifyAdmin(request, env);
+  if (!isAdmin) {
+    return json({ success: false, error: 'Unauthorized' }, 401);
+  }
+
+  const folderData = await env.MEDIA_KV.get(`folder:${folderId}`, 'json');
+  if (!folderData) {
+    return json({ success: false, error: 'Carpeta no encontrada' }, 404);
+  }
+
+  const config = await getConfig(env);
+
+  // Delete all files in this folder from Drive and KV
+  const fileIds = await env.MEDIA_KV.get('app:files', 'json') || [];
+  let deletedFiles = 0;
+  const remainingFileIds = [];
+
+  for (const id of fileIds) {
+    const fileData = await env.MEDIA_KV.get(`file:${id}`, 'json');
+    if (fileData && fileData.folder_id === folderId) {
+      // Delete from Google Drive
+      try {
+        if (config?.drive_credentials && fileData.drive_id) {
+          await deleteDriveFile(config.drive_credentials, fileData.drive_id);
+          deletedFiles++;
+        }
+      } catch (e) {
+        console.error(`Failed to delete file ${id} from Drive:`, e.message);
+      }
+      await env.MEDIA_KV.delete(`file:${id}`);
+    } else {
+      remainingFileIds.push(id);
+    }
+  }
+
+  // Update file list (remove deleted files)
+  await env.MEDIA_KV.put('app:files', JSON.stringify(remainingFileIds));
+
+  // Delete the Drive folder itself
+  try {
+    if (config?.drive_credentials && folderData.drive_id) {
+      await deleteDriveFolder(config.drive_credentials, folderData.drive_id);
+    }
+  } catch (e) {
+    console.error(`Failed to delete Drive folder ${folderId}:`, e.message);
+  }
+
+  // Remove folder from KV
+  await env.MEDIA_KV.delete(`folder:${folderId}`);
+
+  // Remove from folder list
+  const foldersList = await env.MEDIA_KV.get('app:folders', 'json') || [];
+  const updatedFolders = foldersList.filter(fid => fid !== folderId);
+  await env.MEDIA_KV.put('app:folders', JSON.stringify(updatedFolders));
+
+  return json({
+    success: true,
+    message: `Carpeta "${folderData.name}" eliminada con ${deletedFiles} archivos`
+  });
+}
+
+// ============================================
+// FILE HANDLERS
+// ============================================
+
+// POST /api/upload — Upload a file (optional folder_id via query param, form field, or header)
+async function handleUpload(request, env, url) {
   const config = await getConfig(env);
   if (!config || !config.drive_credentials) {
     return json({ success: false, error: 'App no configurada. Ve a / para configurar.' }, 400);
@@ -313,10 +554,25 @@ async function handleUpload(request, env) {
       return json({ success: false, error: 'Archivo demasiado grande. Máximo 100MB.' }, 400);
     }
 
+    // Determine folder_id from: query param > form field > header
+    let folderId = url.searchParams.get('folder_id') || formData.get('folder_id') || request.headers.get('X-Folder-ID') || null;
+
+    // If a folder_id is provided, verify it exists and get the Drive folder ID
+    let targetDriveFolderId = config.drive_folder_id; // Default: root folder
+    let folderRecord = null;
+
+    if (folderId) {
+      folderRecord = await env.MEDIA_KV.get(`folder:${folderId}`, 'json');
+      if (!folderRecord) {
+        return json({ success: false, error: 'Carpeta no encontrada. El folder_id no es válido.' }, 400);
+      }
+      targetDriveFolderId = folderRecord.drive_id;
+    }
+
     // Upload to Google Drive
     const driveResult = await uploadFile(
       config.drive_credentials,
-      config.drive_folder_id,
+      targetDriveFolderId,
       fileName,
       contentType,
       fileData
@@ -340,6 +596,11 @@ async function handleUpload(request, env) {
       created_at: new Date().toISOString(),
       date_display: new Date().toLocaleDateString('es')
     };
+
+    // Add folder_id to file record if provided
+    if (folderId) {
+      fileRecord.folder_id = folderId;
+    }
 
     // Optional: Upload to Cloudinary (images and videos only)
     if (config.cloudinary_cloud_name && isCloudinarySupported(contentType)) {

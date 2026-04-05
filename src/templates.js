@@ -45,6 +45,8 @@ const IC = {
   chevronRight: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>`,
   chevronLeft: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>`,
   refreshCw: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>`,
+  folder: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>`,
+  folderPlus: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>`,
 };
 
 function icon(name) {
@@ -439,17 +441,22 @@ async function saveConfig() {
 // ============================================
 // DASHBOARD
 // ============================================
-export function dashboardPage(config, files = []) {
+export function dashboardPage(config, files = [], folders = []) {
   const hasCloudinary = !!config.cloudinary_cloud_name;
 
+  // Build folder list items JSON for JS
+  const foldersJson = JSON.stringify(folders.map(f => ({ id: f.id, name: f.name, file_count: f.file_count || 0 })));
+  // Build files JSON with folder_id for client-side filtering
+  const filesJson = JSON.stringify(files.map(f => ({ ...f })));
+
   const fileListHtml = files.length === 0
-    ? `<div class="empty-state">
+    ? `<div class="empty-state" id="emptyState">
         <div class="empty-icon">${IC.upload}</div>
         <p style="color:var(--text-secondary);font-size:15px;font-weight:500">Sin archivos</p>
         <p style="color:var(--text-muted);font-size:13px;margin-top:4px">Arrastra archivos al area de arriba o haz click para seleccionar</p>
       </div>`
     : files.map(f => `
-      <div class="file-row" data-id="${f.id}">
+      <div class="file-row" data-id="${f.id}" data-folder="${f.folder_id||''}">
         <div class="file-icon-wrap type-${(f.type_display||'').toLowerCase()}">
           ${fileIconByType(f.type)}
         </div>
@@ -597,6 +604,74 @@ ${BASE_CSS}
   }
   .docs-promo-text { flex: 1; }
   @media (max-width: 640px) { .docs-promo { flex-direction: column; text-align: center; } .docs-promo .btn { width: 100%; } }
+
+  /* Folder tabs */
+  .folder-section { margin-bottom: 24px; }
+  .folder-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 12px;
+  }
+  .folder-header h2 { font-size: 14px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
+  .folder-tabs {
+    display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px;
+    scrollbar-width: none;
+  }
+  .folder-tabs::-webkit-scrollbar { display: none; }
+  .folder-tab {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 14px; border-radius: 9999px;
+    font-size: 13px; font-weight: 500;
+    background: var(--bg-surface); color: var(--text-secondary);
+    border: 1px solid var(--border);
+    cursor: pointer; transition: all var(--transition);
+    white-space: nowrap; flex-shrink: 0;
+    font-family: var(--font);
+  }
+  .folder-tab:hover { background: var(--bg-surface-2); color: var(--text-primary); border-color: var(--border-hover); }
+  .folder-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .folder-tab .folder-count {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 18px; padding: 0 5px;
+    border-radius: 9999px; font-size: 11px; font-weight: 600;
+    background: rgba(255,255,255,0.15);
+  }
+  .folder-tab:not(.active) .folder-count { background: var(--bg-surface-2); color: var(--text-muted); }
+  .folder-tab .folder-delete {
+    display: none; margin-left: 2px; color: rgba(255,255,255,0.7);
+    background: none; border: none; cursor: pointer; padding: 0;
+    line-height: 1; font-size: 14px;
+  }
+  .folder-tab:hover .folder-delete { display: inline; }
+  .folder-tab.active .folder-delete { color: rgba(255,255,255,0.8); }
+  .folder-tab .folder-delete:hover { color: #fff; }
+  .create-folder-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border-radius: var(--radius-sm);
+    background: var(--bg-surface); border: 1px solid var(--border);
+    color: var(--text-muted); cursor: pointer;
+    transition: all var(--transition);
+  }
+  .create-folder-btn:hover { background: var(--accent-subtle); color: var(--accent); border-color: var(--accent); }
+  .folder-create-inline {
+    display: none; align-items: center; gap: 8px; margin-top: 8px;
+  }
+  .folder-create-inline.visible { display: flex; }
+  .folder-create-inline input {
+    flex: 1; padding: 8px 12px; font-size: 13px;
+  }
+  .folder-create-inline .btn { padding: 8px 12px; font-size: 13px; }
+  .folder-active-label {
+    display: none; align-items: center; gap: 6px;
+    padding: 8px 14px; border-radius: var(--radius-md);
+    background: var(--accent-subtle); color: var(--accent);
+    font-size: 13px; font-weight: 500; margin-bottom: 16px;
+    border: 1px solid rgba(249,115,22,0.2);
+  }
+  .folder-active-label.visible { display: inline-flex; }
+  .folder-active-label button {
+    background: none; border: none; color: var(--accent);
+    cursor: pointer; padding: 0 0 0 4px; display: flex;
+  }
 </style>
 </head>
 <body>
@@ -626,6 +701,32 @@ ${BASE_CSS}
   <div class="progress-wrap" id="progressWrap">
     <div class="progress-label" id="progressLabel">Subiendo...</div>
     <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+  </div>
+
+  <!-- Folders Section -->
+  <div class="folder-section">
+    <div class="folder-header">
+      <h2>Carpetas</h2>
+      <button class="create-folder-btn" onclick="toggleCreateFolder()" title="Nueva carpeta">${IC.folderPlus}</button>
+    </div>
+    <div class="folder-create-inline" id="createFolderInline">
+      <input type="text" id="newFolderName" placeholder="Nombre de la carpeta..." maxlength="100" onkeydown="if(event.key==='Enter')createNewFolder()">
+      <button class="btn btn-primary" onclick="createNewFolder()" style="flex-shrink:0">${IC.check} Crear</button>
+      <button class="btn btn-ghost" onclick="toggleCreateFolder()" style="flex-shrink:0">${IC.x}</button>
+    </div>
+    <div class="folder-tabs" id="folderTabs">
+      <button class="folder-tab active" data-folder="" onclick="selectFolder(this, '')">
+        ${IC.cloud} Todos <span class="folder-count" id="countAll">${files.length}</span>
+      </button>
+      <button class="folder-tab" data-folder="__root__" onclick="selectFolder(this, '__root__')">
+        ${IC.hardDrive} Root <span class="folder-count" id="countRoot">0</span>
+      </button>
+    </div>
+    <div class="folder-active-label" id="folderActiveLabel">
+      <span id="folderActiveIcon">${IC.folder}</span>
+      <span id="folderActiveName">Carpeta</span>
+      <button onclick="selectFolder(document.querySelector('.folder-tab[data-folder=\\"\\"]'), '')" title="Volver a todos">${IC.x}</button>
+    </div>
   </div>
 
   <div class="stats-row">
@@ -704,6 +805,134 @@ ${BASE_CSS}
 <div class="toast-container" id="toastContainer"></div>
 
 <script>
+// ============ STATE ============
+const ALL_FILES = ${filesJson};
+const ALL_FOLDERS = ${foldersJson};
+let currentFolder = '';
+
+// ============ INIT ============
+(function init() {
+  // Render folder tabs
+  renderFolderTabs();
+  // Update root count
+  const rootCount = ALL_FILES.filter(f => !f.folder_id).length;
+  const el = document.getElementById('countRoot');
+  if (el) el.textContent = rootCount;
+  // Restore admin password
+  const saved = localStorage.getItem('cmh_admin');
+  if (saved) { const p = document.getElementById('adminPass'); if(p) p.value = saved; }
+})();
+
+function renderFolderTabs() {
+  const container = document.getElementById('folderTabs');
+  ALL_FOLDERS.forEach(f => {
+    const tab = document.createElement('button');
+    tab.className = 'folder-tab';
+    tab.dataset.folder = f.id;
+    tab.innerHTML = '${IC.folder} ' + escapeHtml(f.name) + ' <span class="folder-count">' + f.file_count + '</span><span class="folder-delete" onclick="event.stopPropagation();deleteFolderApi(\\'' + f.id + '\\',\\'' + escapeHtml(f.name).replace(/'/g, \"\\\\'\") + '\\')" title="Eliminar carpeta">&times;</span>';
+    tab.addEventListener('click', function() { selectFolder(this, f.id); });
+    container.appendChild(tab);
+  });
+}
+
+// ============ FOLDERS ============
+function toggleCreateFolder() {
+  const el = document.getElementById('createFolderInline');
+  el.classList.toggle('visible');
+  if (el.classList.contains('visible')) {
+    document.getElementById('newFolderName').focus();
+  }
+}
+
+async function createNewFolder() {
+  const input = document.getElementById('newFolderName');
+  const name = input.value.trim();
+  if (!name) { toast('El nombre es obligatorio', 'error'); return; }
+
+  try {
+    const r = await fetch('/api/folders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    const d = await r.json();
+    if (d.success) {
+      toast('Carpeta "' + name + '" creada', 'success');
+      input.value = '';
+      document.getElementById('createFolderInline').classList.remove('visible');
+      setTimeout(() => location.reload(), 600);
+    } else {
+      toast(d.error || 'Error al crear carpeta', 'error');
+    }
+  } catch(e) {
+    toast('Error de conexion', 'error');
+  }
+}
+
+async function deleteFolderApi(id, name) {
+  if (!confirm('Eliminar la carpeta "' + name + '" y todos sus archivos?')) return;
+  const p = document.getElementById('adminPass');
+  const h = {};
+  if (p && p.value) { h['X-Admin-Key'] = p.value; }
+  try {
+    const r = await fetch('/api/folders/' + id, { method: 'DELETE', headers: h });
+    const d = await r.json();
+    if (d.success) {
+      toast(d.message, 'success');
+      setTimeout(() => location.reload(), 600);
+    } else {
+      toast(d.error || 'Error', 'error');
+    }
+  } catch(e) { toast('Error de conexion', 'error'); }
+}
+
+function selectFolder(tab, folderId) {
+  currentFolder = folderId;
+  document.querySelectorAll('.folder-tab').forEach(t => t.classList.remove('active'));
+  tab.classList.add('active');
+
+  const label = document.getElementById('folderActiveLabel');
+  const activeName = document.getElementById('folderActiveName');
+
+  if (folderId === '' || folderId === '__root__') {
+    label.classList.remove('visible');
+  } else {
+    const folder = ALL_FOLDERS.find(f => f.id === folderId);
+    if (folder) {
+      activeName.textContent = folder.name;
+      label.classList.add('visible');
+    }
+  }
+
+  filterFilesByFolder();
+}
+
+function filterFilesByFolder() {
+  const rows = document.querySelectorAll('.file-row');
+  let visibleCount = 0;
+
+  rows.forEach(r => {
+    const fileFolder = r.dataset.folder || '';
+    let show = false;
+
+    if (currentFolder === '') {
+      show = true; // "Todos" — show all
+    } else if (currentFolder === '__root__') {
+      show = !fileFolder; // "Root" — show files without folder
+    } else {
+      show = fileFolder === currentFolder;
+    }
+
+    r.style.display = show ? 'flex' : 'none';
+    if (show) visibleCount++;
+  });
+
+  // Show/hide empty state
+  const empty = document.getElementById('emptyState');
+  if (empty) empty.style.display = visibleCount === 0 ? 'block' : 'none';
+}
+
+// ============ UPLOAD ============
 const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
 dropZone.addEventListener('click', () => fileInput.click());
@@ -734,12 +963,18 @@ function uploadFiles(files) {
     const fd = new FormData();
     fd.append('file', file);
 
+    // If a specific folder is selected (not "Todos" or "Root"), send folder_id
+    let uploadUrl = '/api/upload';
+    if (currentFolder && currentFolder !== '__root__') {
+      fd.append('folder_id', currentFolder);
+    }
+
     label.textContent = 'Subiendo ' + file.name + ' (' + (fileIndex + 1) + '/' + files.length + ')';
     loaded = 0;
     total = file.size;
 
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', '/api/upload', true);
+    xhr.open('POST', uploadUrl, true);
 
     xhr.upload.addEventListener('progress', function(e) {
       if (e.lengthComputable) {
@@ -752,16 +987,40 @@ function uploadFiles(files) {
     });
 
     xhr.addEventListener('load', function() {
-      try {
-        const d = JSON.parse(xhr.responseText);
-        if (!d.success) toast(d.error || 'Error al subir', 'error');
-      } catch(e) { toast('Error de respuesta', 'error'); }
+      if (xhr.status >= 400) {
+        // Server returned an error
+        let errMsg = 'Error al subir ' + file.name + ' (HTTP ' + xhr.status + ')';
+        try {
+          const d = JSON.parse(xhr.responseText);
+          if (d.error) errMsg = d.error;
+        } catch(e) {
+          if (xhr.responseText) errMsg = xhr.responseText.substring(0, 200);
+        }
+        toast(errMsg, 'error');
+        fill.style.background = 'var(--danger)';
+        setTimeout(() => { fill.style.background = 'var(--accent)'; }, 1500);
+      } else {
+        try {
+          const d = JSON.parse(xhr.responseText);
+          if (!d.success) {
+            toast(d.error || 'Error al subir', 'error');
+            fill.style.background = 'var(--danger)';
+            setTimeout(() => { fill.style.background = 'var(--accent)'; }, 1500);
+          }
+        } catch(e) {
+          toast('Error de respuesta del servidor', 'error');
+          fill.style.background = 'var(--danger)';
+          setTimeout(() => { fill.style.background = 'var(--accent)'; }, 1500);
+        }
+      }
       fileIndex++;
       uploadNext();
     });
 
     xhr.addEventListener('error', function() {
-      toast('Error subiendo ' + file.name, 'error');
+      toast('Error de red subiendo ' + file.name, 'error');
+      fill.style.background = 'var(--danger)';
+      setTimeout(() => { fill.style.background = 'var(--accent)'; }, 1500);
       fileIndex++;
       uploadNext();
     });
@@ -1012,6 +1271,9 @@ X-Admin-Key: tu_password
 Content-Type: multipart/form-data
 
 <span class="cmt">// Campo: "file" — Archivo a subir</span>
+<span class="cmt">// Opcional: "folder_id" — ID de la carpeta destino</span>
+<span class="cmt">// Opcional via header: X-Folder-ID</span>
+<span class="cmt">// Opcional via query: ?folder_id=xxx</span>
 <span class="cmt">// Tipos permitidos: MP3, MP4, WAV, ZIP, RAR, JPG, PNG, GIF, WebP</span>
 <span class="cmt">// Max: 100MB</span>
 
@@ -1024,6 +1286,7 @@ Content-Type: multipart/form-data
     <span class="str">"type"</span>: <span class="str">"audio/mpeg"</span>,
     <span class="str">"size"</span>: <span class="kw">4521984</span>,
     <span class="str">"size_display"</span>: <span class="str">"4.3 MB"</span>,
+    <span class="str">"folder_id"</span>: <span class="str">"xyz789"</span>,
     <span class="str">"download_url"</span>: <span class="str">"https://drive.usercontent.google.com/..."</span>,
     <span class="str">"embed_url"</span>: <span class="str">"https://drive.google.com/file/d/.../preview"</span>,
     <span class="str">"created_at"</span>: <span class="str">"2026-04-05T12:00:00.000Z"</span>
@@ -1100,6 +1363,98 @@ X-Admin-Key: tu_password
   </div>
 
   <h2 id="t-h-examples">Ejemplos de código</h2>
+
+  <h2 id="t-h-folders" style="margin-top:36px">Carpetas / Workspaces</h2>
+
+  <div class="endpoint">
+    <div class="endpoint-card">
+      <div class="endpoint-head">
+        <span class="method-badge m-post">POST</span>
+        <span class="endpoint-path">/api/folders</span>
+        <span class="endpoint-desc" id="t-create-folder-desc">Crear carpeta</span>
+      </div>
+      <div class="endpoint-body">
+        <pre><code>POST /api/folders
+Content-Type: application/json
+
+{
+  <span class="str">"name"</span>: <span class="str">"Mi App de Música"</span>
+}
+
+<span class="cmt">// Response</span>
+{
+  <span class="str">"success"</span>: <span class="kw">true</span>,
+  <span class="str">"folder"</span>: {
+    <span class="str">"id"</span>: <span class="str">"abc123def456"</span>,
+    <span class="str">"name"</span>: <span class="str">"Mi App de Música"</span>,
+    <span class="str">"drive_id"</span>: <span class="str">"1XyZ..."</span>,
+    <span class="str">"created_at"</span>: <span class="str">"2026-04-05T12:00:00.000Z"</span>,
+    <span class="str">"file_count"</span>: <span class="kw">0</span>
+  }
+}</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="endpoint">
+    <div class="endpoint-card">
+      <div class="endpoint-head">
+        <span class="method-badge m-get">GET</span>
+        <span class="endpoint-path">/api/folders</span>
+        <span class="endpoint-desc" id="t-list-folders-desc">Listar carpetas</span>
+      </div>
+      <div class="endpoint-body">
+        <pre><code>GET /api/folders
+
+<span class="cmt">// Response</span>
+{
+  <span class="str">"folders"</span>: [
+    { <span class="str">"id"</span>: <span class="str">"abc123"</span>, <span class="str">"name"</span>: <span class="str">"Música"</span>, <span class="str">"file_count"</span>: <span class="kw">5</span> },
+    { <span class="str">"id"</span>: <span class="str">"def456"</span>, <span class="str">"name"</span>: <span class="str">"Videos"</span>, <span class="str">"file_count"</span>: <span class="kw">3</span> }
+  ],
+  <span class="str">"total"</span>: <span class="kw">2</span>
+}</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="endpoint">
+    <div class="endpoint-card">
+      <div class="endpoint-head">
+        <span class="method-badge m-get">GET</span>
+        <span class="endpoint-path">/api/folders/:id/files</span>
+        <span class="endpoint-desc" id="t-folder-files-desc">Archivos en carpeta</span>
+      </div>
+      <div class="endpoint-body">
+        <pre><code>GET /api/folders/abc123def456/files
+
+<span class="cmt">// Response</span>
+{
+  <span class="str">"folder"</span>: { <span class="str">"id"</span>: <span class="str">"abc123def456"</span>, <span class="str">"name"</span>: <span class="str">"Música"</span> },
+  <span class="str">"files"</span>: [ { <span class="str">"id"</span>: <span class="str">"..."</span>, <span class="str">"name"</span>: <span class="str">"song.mp3"</span>, <span class="str">"download_url"</span>: <span class="str">"..."</span> } ],
+  <span class="str">"total"</span>: <span class="kw">5</span>
+}</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="endpoint">
+    <div class="endpoint-card">
+      <div class="endpoint-head">
+        <span class="method-badge m-delete">DEL</span>
+        <span class="endpoint-path">/api/folders/:id</span>
+        <span class="endpoint-desc" id="t-del-folder-desc">Eliminar carpeta y archivos (admin)</span>
+      </div>
+      <div class="endpoint-body">
+        <pre><code>DELETE /api/folders/abc123def456
+X-Admin-Key: tu_password
+
+{ <span class="str">"success"</span>: <span class="kw">true</span>, <span class="str">"message"</span>: <span class="str">"Carpeta eliminada con 5 archivos"</span> }</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <h2 id="t-h-examples2" style="display:none">Ejemplos de código</h2>
 
   <div class="example-tabs">
     <button class="example-tab active" onclick="showTab('nodejs',this)">Node.js</button>
@@ -1219,7 +1574,7 @@ curl <span class="str">"${baseUrl}/api/status"</span></code></pre>
 const T = {
   es: {
     title: 'API Reference', subtitle: 'Base URL:',
-    hConfig: 'Configuración', hFiles: 'Archivos', hExamples: 'Ejemplos de código',
+    hConfig: 'Configuración', hFiles: 'Archivos', hFolders: 'Carpetas / Workspaces', hExamples: 'Ejemplos de código',
     statusDesc: 'Estado del sistema',
     configDesc: 'Guardar credenciales',
     resetDesc: 'Resetear configuración (admin)',
@@ -1228,6 +1583,10 @@ const T = {
     infoDesc: 'Info de archivo',
     dlDesc: 'Descargar archivo',
     delDesc: 'Eliminar archivo (admin)',
+    createFolderDesc: 'Crear carpeta',
+    listFoldersDesc: 'Listar carpetas',
+    folderFilesDesc: 'Archivos en carpeta',
+    delFolderDesc: 'Eliminar carpeta y archivos (admin)',
     note: '<strong>Nota:</strong> Todos los endpoints responden en JSON. Para solicitudes desde navegador, la raíz <code>/</code> devuelve HTML. Agrega <code>Accept: application/json</code> para forzar JSON.',
     streamingTitle: 'Streaming:',
     streamingText: 'Para integrar con reproductores de video/audio, usa la URL de download directamente en tu tag &lt;video&gt; o &lt;audio&gt;. Si Cloudinary está configurado, se redirige al stream CDN optimizado.',
@@ -1244,6 +1603,10 @@ const T = {
     infoDesc: 'File info',
     dlDesc: 'Download file',
     delDesc: 'Delete file (admin)',
+    createFolderDesc: 'Create folder',
+    listFoldersDesc: 'List folders',
+    folderFilesDesc: 'Files in folder',
+    delFolderDesc: 'Delete folder and files (admin)',
     note: '<strong>Note:</strong> All endpoints respond in JSON. Browser requests to <code>/</code> return HTML. Add <code>Accept: application/json</code> to force JSON response.',
     streamingTitle: 'Streaming:',
     streamingText: 'To integrate with video/audio players, use the download URL directly in your &lt;video&gt; or &lt;audio&gt; tag. If Cloudinary is configured, it redirects to the optimized CDN stream.',
@@ -1260,6 +1623,10 @@ const T = {
     infoDesc: 'Info do arquivo',
     dlDesc: 'Baixar arquivo',
     delDesc: 'Excluir arquivo (admin)',
+    createFolderDesc: 'Criar pasta',
+    listFoldersDesc: 'Listar pastas',
+    folderFilesDesc: 'Arquivos na pasta',
+    delFolderDesc: 'Excluir pasta e arquivos (admin)',
     note: '<strong>Nota:</strong> Todos os endpoints respondem em JSON. Requisições do navegador para <code>/</code> retornam HTML. Adicione <code>Accept: application/json</code> para forçar JSON.',
     streamingTitle: 'Streaming:',
     streamingText: 'Para integrar com reprodutores de vídeo/áudio, use a URL de download diretamente na tag &lt;video&gt; ou &lt;audio&gt;. Se o Cloudinary estiver configurado, redireciona para o stream CDN otimizado.',
@@ -1276,6 +1643,7 @@ function setLang(lang) {
   document.getElementById('t-subtitle').innerHTML = t.subtitle + ' <code>${baseUrl}</code>';
   document.getElementById('t-h-config').textContent = t.hConfig;
   document.getElementById('t-h-files').textContent = t.hFiles;
+  document.getElementById('t-h-folders').textContent = t.hFolders;
   document.getElementById('t-h-examples').textContent = t.hExamples;
   document.getElementById('t-status-desc').textContent = t.statusDesc;
   document.getElementById('t-config-desc').textContent = t.configDesc;
@@ -1285,6 +1653,10 @@ function setLang(lang) {
   document.getElementById('t-info-desc').textContent = t.infoDesc;
   document.getElementById('t-dl-desc').textContent = t.dlDesc;
   document.getElementById('t-del-desc').textContent = t.delDesc;
+  document.getElementById('t-create-folder-desc').textContent = t.createFolderDesc;
+  document.getElementById('t-list-folders-desc').textContent = t.listFoldersDesc;
+  document.getElementById('t-folder-files-desc').textContent = t.folderFilesDesc;
+  document.getElementById('t-del-folder-desc').textContent = t.delFolderDesc;
   document.getElementById('t-note').innerHTML = t.note;
   document.getElementById('t-streaming-title').textContent = t.streamingTitle;
   document.getElementById('t-streaming-text').textContent = t.streamingText;

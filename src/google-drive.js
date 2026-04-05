@@ -170,6 +170,62 @@ export async function listFiles(serviceAccount, folderId) {
 }
 
 /**
+ * Create a folder in Google Drive inside a parent folder
+ */
+export async function createFolder(serviceAccount, parentFolderId, folderName) {
+  const token = await getAccessToken(serviceAccount);
+
+  const response = await fetch(`${DRIVE_API}/files`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      name: folderName,
+      mimeType: 'application/vnd.google-apps.folder',
+      parents: [parentFolderId]
+    })
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Drive create folder failed: ${error}`);
+  }
+
+  const folderInfo = await response.json();
+  return {
+    id: folderInfo.id,
+    name: folderInfo.name,
+    webViewLink: folderInfo.webViewLink
+  };
+}
+
+/**
+ * Delete a folder from Google Drive (by ID)
+ * Note: This moves it to trash, it doesn't permanently delete.
+ * For permanent deletion, add ?supportsAllDrives=true&supportsTeamDrives=true and use trashed=false
+ */
+export async function deleteFolder(serviceAccount, driveFolderId) {
+  const token = await getAccessToken(serviceAccount);
+
+  const response = await fetch(
+    `${DRIVE_API}/files/${driveFolderId}`,
+    {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${token}` }
+    }
+  );
+
+  if (!response.ok && response.status !== 204) {
+    const error = await response.text();
+    throw new Error(`Drive folder delete failed: ${error}`);
+  }
+
+  return true;
+}
+
+/**
  * Verify that service account credentials are valid
  * by attempting to get an access token
  */
