@@ -39,7 +39,7 @@ import { verifyFirebaseToken, extractFirebaseToken, authenticateRequest } from '
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, X-Admin-Key, X-Folder-ID, Authorization, X-Firebase-Auth, X-Google-Access-Token'
+  'Access-Control-Allow-Headers': 'Content-Type, X-Admin-Key, X-Folder-ID, Authorization, X-Firebase-Auth, X-Google-Access-Token, X-API-Key'
 };
 
 export default {
@@ -205,6 +205,39 @@ async function verifyAdmin(request, env) {
   if (!providedKey) return false;
   const hash = await hashPassword(providedKey);
   return hash === config.admin_password_hash;
+}
+
+// ============================================
+// FOLDER API KEY AUTHENTICATION
+// ============================================
+
+// Generate a deterministic API key for a folder using HMAC-SHA256
+// Secret is derived from Supabase service key (always available)
+async function generateFolderApiKey(folderId, env) {
+  const secret = env.SUPABASE_SERVICE_KEY || 'fallback-secret';
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(secret);
+  const key = await crypto.subtle.importKey('raw', keyData, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const data = encoder.encode(`cmh-folder:${folderId}`);
+  const signature = await crypto.subtle.sign('HMAC', key, data);
+  const hex = Array.from(new Uint8Array(signature)).map(b => b.toString(16).padStart(2, '0')).join('');
+  return `cmh_${folderId.substring(0, 8)}_${hex.substring(0, 32)}`;
+}
+
+// Verify an API key against a folder ID
+async function verifyFolderApiKey(request, folderId, env) {
+  // Check X-API-Key header or Authorization: Bearer cmh_xxx
+  let providedKey = request.headers.get('X-API-Key');
+  if (!providedKey) {
+    const authHeader = request.headers.get('Authorization') || '';
+    if (authHeader.startsWith('Bearer cmh_')) {
+      providedKey = authHeader.substring(7);
+    }
+  }
+  if (!providedKey || !providedKey.startsWith('cmh_')) return false;
+  
+  const expectedKey = await generateFolderApiKey(folderId, env);
+  return providedKey === expectedKey;
 }
 
 // ============================================
@@ -552,6 +585,14 @@ async function handleCreateFolder(request, env) {
     return json({ success: false, error: 'App no configurada' }, 400);
   }
 
+  // Require authentication
+  if (env.FIREBASE_PROJECT_ID) {
+    const { user: firebaseUser } = await authenticateRequest(request, env);
+    if (!firebaseUser) {
+      return json({ success: false, error: 'No autenticado', code: 'UNAUTHORIZED' }, 401);
+    }
+  }
+
   try {
     const body = await request.json();
     const folderName = (body.name || '').trim();
@@ -596,8 +637,10 @@ async function handleListFolders(request, env) {
     if (f.folder_id) countMap[f.folder_id] = (countMap[f.folder_id] || 0) + 1;
   }
 
+  // Generate API keys for each folder
   for (const folder of folders) {
     folder.file_count = countMap[folder.id] || 0;
+    folder.api_key = await generateFolderApiKey(folder.id, env);
   }
 
   return json({ folders, total: folders.length });
@@ -612,9 +655,63 @@ async function handleListFolderFiles(request, env, folderId) {
   const folder = await db.select('folders', '*', { filter: { id: folderId }, single: true });
   if (!folder) return json({ success: false, error: 'Carpeta no encontrada' }, 404);
 
-  const files = await db.select('files', '*', { filter: { folder_id: folderId }, order: 'created_at.desc' });
+  // Auth: accept Firebase session OR folder API key
+  if (env.FIREBASE_PROJECT_ID) {
+    const { user: firebaseUser } = await authenticateRequest(request, env);
+    const hasApiKey = await verifyFolderApiKey(request, folderId, env);
+    if (!firebaseUser && !hasApiKey) {
+      return json({ success: false, error: 'No autenticado. Usa Firebase Auth o X-API-Key.', code: 'UNAUTHORIZED' }, 401);
+    }
+  }
 
-  return json({ folder: { id: folder.id, name: folder.name }, files, total: files.length });
+  // Pagination support
+  const url = new URL(request.url);
+  const page = Math.max(1, parseInt(url.searchParams.get('page') || '1'));
+  const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') || '50')));
+  const offset = (page - 1) * limit;
+
+  // Type filter
+  const typeFilter = url.searchParams.get('type') || ''; // audio, video, image, archive
+
+  // Get total count first
+  let baseFilter = { folder_id: folderId };
+  
+  // Build the query with all files first, then paginate in memory
+  // (Supabase client may not support complex filtering)
+  const allFiles = await db.select('files', '*', { filter: baseFilter, order: 'created_at.desc' });
+  
+  // Apply type filter
+  let filteredFiles = allFiles;
+  if (typeFilter) {
+    const typeMap = {
+      audio: ['audio/'],
+      video: ['video/'],
+      image: ['image/'],
+      archive: ['application/zip', 'application/x-zip', 'application/x-rar', 'application/x-7z', 'application/gzip'],
+    };
+    const prefixes = typeMap[typeFilter.toLowerCase()];
+    if (prefixes) {
+      filteredFiles = allFiles.filter(f => prefixes.some(p => (f.type || '').startsWith(p)));
+    }
+  }
+
+  const total = filteredFiles.length;
+  const totalPages = Math.ceil(total / limit);
+  const files = filteredFiles.slice(offset, offset + limit);
+
+  return json({
+    folder: { id: folder.id, name: folder.name, drive_folder_id: folder.drive_folder_id },
+    files,
+    pagination: {
+      page,
+      limit,
+      total,
+      total_pages: totalPages,
+      has_next: page < totalPages,
+      has_prev: page > 1,
+    },
+    filters: { type: typeFilter || null }
+  });
 }
 
 // DELETE /api/folders/:id
@@ -645,16 +742,6 @@ async function handleDeleteFolder(request, env, folderId) {
   // Delete files from DB
   if (files.length > 0) {
     await db.remove('files', { folder_id: folderId });
-  }
-
-  // Optionally delete the Drive folder itself (API-created only)
-  try {
-    if (config?.drive_credentials && folder.drive_link) {
-      // Only delete from Drive if it was created via API (has drive_link)
-      // Don't delete user-linked folders
-    }
-  } catch (e) {
-    console.error(`Failed to delete Drive folder:`, e.message);
   }
 
   // Delete folder from DB
@@ -701,6 +788,13 @@ async function handleAuthCallback(request, env, url) {
   const code = url.searchParams.get('code');
   const state = url.searchParams.get('state');
   const error = url.searchParams.get('error');
+
+  // Note: Full CSRF state validation requires persistent storage (KV/cookie).
+  // State is generated client-side and should be validated in production.
+  // For now, we log a warning if state is missing.
+  if (!state) {
+    console.warn('OAuth2 callback received without state parameter — possible CSRF');
+  }
 
   if (error) {
     return html(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Error OAuth2</title>
@@ -1225,8 +1319,48 @@ async function handleListFiles(request, env) {
   const config = await getConfig(env);
   if (!config) return json({ success: false, error: 'App no configurada' }, 400);
 
-  const files = await db.select('files', '*', { order: 'created_at.desc' });
-  return json({ files, total: files.length });
+  // Pagination support
+  const url = new URL(request.url);
+  const page = Math.max(1, parseInt(url.searchParams.get('page') || '1'));
+  const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') || '50')));
+  const offset = (page - 1) * limit;
+
+  // Type filter
+  const typeFilter = url.searchParams.get('type') || ''; // audio, video, image, archive
+
+  const allFiles = await db.select('files', '*', { order: 'created_at.desc' });
+
+  // Apply type filter
+  let filteredFiles = allFiles;
+  if (typeFilter) {
+    const typeMap = {
+      audio: ['audio/'],
+      video: ['video/'],
+      image: ['image/'],
+      archive: ['application/zip', 'application/x-zip', 'application/x-rar', 'application/x-7z', 'application/gzip'],
+    };
+    const prefixes = typeMap[typeFilter.toLowerCase()];
+    if (prefixes) {
+      filteredFiles = allFiles.filter(f => prefixes.some(p => (f.type || '').startsWith(p)));
+    }
+  }
+
+  const total = filteredFiles.length;
+  const totalPages = Math.ceil(total / limit);
+  const files = filteredFiles.slice(offset, offset + limit);
+
+  return json({
+    files,
+    pagination: {
+      page,
+      limit,
+      total,
+      total_pages: totalPages,
+      has_next: page < totalPages,
+      has_prev: page > 1,
+    },
+    filters: { type: typeFilter || null }
+  });
 }
 
 // GET /api/files/:id
