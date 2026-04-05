@@ -185,6 +185,12 @@ async function handleIndex(request, env) {
     return html(setupPage());
   }
 
+  // Configured but no folders → show setup with existing config preloaded
+  const storedFolders = config.folders || [];
+  if (storedFolders.length === 0) {
+    return html(setupPage(config));
+  }
+
   // Configured → show dashboard
   const fileIds = await env.MEDIA_KV.get('app:files', 'json') || [];
   const files = [];
@@ -236,10 +242,17 @@ async function handleStatus(request, env) {
 async function handleSaveConfig(request, env) {
   try {
     const body = await request.json();
-    const { drive_credentials, drive_folder_id, cloudinary_cloud_name, cloudinary_upload_preset, admin_password } = body;
+    const { drive_credentials, folders, cloudinary_cloud_name, cloudinary_upload_preset, admin_password, drive_folder_id } = body;
 
-    if (!drive_credentials || !drive_folder_id) {
-      return json({ success: false, error: 'Google Drive credentials y folder ID son obligatorios' }, 400);
+    // Support both old format (single drive_folder_id) and new format (folders array)
+    const folderList = folders || (drive_folder_id ? [{ name: 'Principal', drive_folder_id }] : []);
+
+    if (!drive_credentials) {
+      return json({ success: false, error: 'Google Drive credentials son obligatorios' }, 400);
+    }
+
+    if (folderList.length === 0) {
+      return json({ success: false, error: 'Agrega al menos una carpeta de Google Drive' }, 400);
     }
 
     // Validate service account format
@@ -259,7 +272,8 @@ async function handleSaveConfig(request, env) {
     // Build config object (store credentials but hash the password)
     const config = {
       drive_credentials: drive_credentials,
-      drive_folder_id: drive_folder_id,
+      drive_folder_id: folderList[0].drive_folder_id, // Backward compat: first folder as default
+      folders: folderList,
       admin_password_hash: admin_password ? await hashPassword(admin_password) : null,
       created_at: new Date().toISOString()
     };
@@ -278,13 +292,33 @@ async function handleSaveConfig(request, env) {
     if (!existingFiles) {
       await env.MEDIA_KV.put('app:files', JSON.stringify([]));
     }
-    // Initialize folder list
-    const existingFolders = await env.MEDIA_KV.get('app:folders', 'json');
-    if (!existingFolders) {
-      await env.MEDIA_KV.put('app:folders', JSON.stringify([]));
+
+    // Create workspace entries for each folder
+    const folderIds = [];
+    const existingFolderIds = await env.MEDIA_KV.get('app:folders', 'json') || [];
+    const existingFolderMap = {};
+    for (const fid of existingFolderIds) {
+      const fd = await env.MEDIA_KV.get(`folder:${fid}`, 'json');
+      if (fd) existingFolderMap[fd.drive_folder_id] = fd;
     }
 
-    return json({ success: true, message: 'Configuración guardada correctamente' });
+    for (const folder of folderList) {
+      let workspaceId = existingFolderMap[folder.drive_folder_id]?.id;
+      if (!workspaceId) {
+        workspaceId = generateId();
+      }
+      const folderData = {
+        id: workspaceId,
+        name: folder.name,
+        drive_folder_id: folder.drive_folder_id,
+        created_at: existingFolderMap[folder.drive_folder_id]?.created_at || new Date().toISOString()
+      };
+      await env.MEDIA_KV.put(`folder:${workspaceId}`, JSON.stringify(folderData));
+      folderIds.push(workspaceId);
+    }
+    await env.MEDIA_KV.put('app:folders', JSON.stringify(folderIds));
+
+    return json({ success: true, message: `Configuración guardada. ${folderList.length} carpeta(s) vinculada(s).` });
 
   } catch (error) {
     return json({ success: false, error: 'Error al guardar: ' + error.message }, 500);
