@@ -249,7 +249,10 @@ const BASE_CSS = `
 // ============================================
 // SETUP PAGE
 // ============================================
-export function setupPage() {
+export function setupPage(existingConfig) {
+  const savedFolders = existingConfig?.folders || [];
+  const hasCreds = !!existingConfig?.drive_credentials;
+
   return `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -259,7 +262,7 @@ export function setupPage() {
 <style>
 ${BASE_CSS}
   body { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
-  .setup-container { max-width: 560px; width: 100%; }
+  .setup-container { max-width: 600px; width: 100%; }
   .setup-logo { text-align: center; margin-bottom: 32px; }
   .setup-logo svg { color: var(--accent); margin-bottom: 12px; }
   .setup-logo h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
@@ -290,6 +293,35 @@ ${BASE_CSS}
   .save-status.err { background: var(--danger-subtle); color: var(--danger); border: 1px solid rgba(239,68,68,0.2); }
   .footer-text { text-align: center; margin-top: 24px; font-size: 12px; color: var(--text-muted); }
   .footer-text a { color: var(--text-secondary); }
+
+  /* Folder list */
+  .folder-entry {
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 12px; background: var(--bg-root); border-radius: var(--radius-md);
+    margin-bottom: 8px; border: 1px solid var(--border); position: relative;
+  }
+  .folder-entry-top { display: flex; align-items: center; gap: 8px; }
+  .folder-entry-top input { flex: 1; padding: 8px 10px; font-size: 13px; }
+  .folder-entry-bottom { display: flex; gap: 8px; }
+  .folder-entry-bottom input { flex: 1; padding: 8px 10px; font-size: 12px; font-family: 'SF Mono','Fira Code',monospace; }
+  .folder-entry .btn-remove {
+    background: none; border: none; color: var(--text-muted); cursor: pointer;
+    padding: 4px; border-radius: var(--radius-sm); display: flex; transition: all var(--transition);
+  }
+  .folder-entry .btn-remove:hover { color: var(--danger); background: var(--danger-subtle); }
+  .add-folder-btn {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 10px; border: 1px dashed var(--border); border-radius: var(--radius-md);
+    background: transparent; color: var(--text-muted); font-size: 13px; font-weight: 500;
+    cursor: pointer; transition: all var(--transition); width: 100%;
+    font-family: var(--font);
+  }
+  .add-folder-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-subtle); }
+  .folder-api-hint {
+    font-size: 11px; color: var(--text-muted); font-family: 'SF Mono','Fira Code',monospace;
+    background: var(--bg-surface); padding: 4px 8px; border-radius: var(--radius-sm);
+    margin-top: 2px; word-break: break-all;
+  }
 </style>
 </head>
 <body>
@@ -297,26 +329,20 @@ ${BASE_CSS}
   <div class="setup-logo">
     ${IC.cloud}
     <h1>Cloud Media Host</h1>
-    <p>Archivo almacenamiento gratuito sobre Google Drive + Cloudflare</p>
+    <p>Almacenamiento gratuito sobre Google Drive + Cloudflare</p>
   </div>
 
   <div class="card setup-card">
     <h2>
       <span style="color:var(--accent)">${IC.hardDrive}</span>
-      Google Drive
+      Cuenta de servicio
       <span class="badge badge-accent">Requerido</span>
     </h2>
 
     <div class="field-group">
       <label class="field-label">Service Account JSON</label>
-      <textarea id="driveJson" rows="5" placeholder='{"type":"service_account","private_key":"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n","client_email":"...@....iam.gserviceaccount.com"}'></textarea>
-      <div class="field-hint">Contenido completo del archivo JSON descargado de Google Cloud Console</div>
-    </div>
-
-    <div class="field-group">
-      <label class="field-label">Carpeta ID</label>
-      <input type="text" id="driveFolder" placeholder="1aBcDeFgHiJkLmNoPqRsTuVwXyZ">
-      <div class="field-hint">ID de la carpeta compartida en Google Drive</div>
+      <textarea id="driveJson" rows="4">${hasCreds ? '' : ''}</textarea>
+      <div class="field-hint">${hasCreds ? '✓ Credenciales guardadas — pegar de nuevo para actualizar' : 'Contenido completo del archivo JSON descargado de Google Cloud Console'}</div>
     </div>
 
     <div class="steps-box">
@@ -324,9 +350,36 @@ ${BASE_CSS}
       1. Ir a <a href="https://console.cloud.google.com" target="_blank">console.cloud.google.com</a><br>
       2. Crear proyecto → Habilitar <strong>Google Drive API</strong><br>
       3. Crear <strong>Cuenta de servicio</strong> → Descargar clave JSON<br>
-      4. Crear carpeta en Drive → Copiar ID de la URL<br>
-      5. <strong>Compartir</strong> la carpeta con el email de la cuenta de servicio
+      4. Crear carpetas en Drive y <strong>compartir cada una</strong> con el email de la cuenta de servicio
     </div>
+  </div>
+
+  <div class="card setup-card">
+    <h2>
+      <span style="color:var(--info)">${IC.hardDrive}</span>
+      Carpetas de Google Drive
+      <span class="badge badge-accent">Requerido</span>
+    </h2>
+    <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;margin-bottom:12px">
+      Vincula las carpetas de tu Google Drive donde se almacenaran los archivos. Cada carpeta funciona como un espacio independiente con su propio API para conectar aplicaciones externas. Pega el enlace completo o solo el ID de la carpeta.
+    </p>
+
+    <div id="folderList">
+      ${savedFolders.map((f, i) => `
+      <div class="folder-entry" data-index="${i}">
+        <div class="folder-entry-top">
+          <input type="text" class="folder-name" placeholder="Nombre (ej: Mi app de musica)" value="${f.name || ''}">
+          <button class="btn-remove" onclick="this.closest('.folder-entry').remove()" title="Quitar">${IC.x}</button>
+        </div>
+        <div class="folder-entry-bottom">
+          <input type="text" class="folder-url" placeholder="https://drive.google.com/drive/folders/... o solo el ID" value="${f.drive_folder_id || ''}">
+        </div>
+      </div>`).join('')}
+    </div>
+
+    <button class="add-folder-btn" onclick="addFolderEntry()">
+      + Agregar carpeta
+    </button>
   </div>
 
   <div class="card setup-card">
@@ -336,17 +389,17 @@ ${BASE_CSS}
       <span class="badge badge-muted">Opcional</span>
     </h2>
     <div class="toggle-row" onclick="document.getElementById('enableCld').click()">
-      <input type="checkbox" id="enableCld">
+      <input type="checkbox" id="enableCld" ${existingConfig?.cloudinary_cloud_name ? 'checked' : ''}>
       <label for="enableCld">Habilitar para thumbnails y streaming de video</label>
     </div>
-    <div class="optional-fields" id="cldFields">
+    <div class="optional-fields ${existingConfig?.cloudinary_cloud_name ? 'visible' : ''}" id="cldFields">
       <div class="field-group">
         <label class="field-label">Cloud Name</label>
-        <input type="text" id="cloudName" placeholder="tu_cloud_name">
+        <input type="text" id="cloudName" placeholder="tu_cloud_name" value="${existingConfig?.cloudinary_cloud_name || ''}">
       </div>
       <div class="field-group">
         <label class="field-label">Upload Preset (unsigned)</label>
-        <input type="text" id="uploadPreset" placeholder="unsigned_preset">
+        <input type="text" id="uploadPreset" placeholder="unsigned_preset" value="${existingConfig?.cloudinary_upload_preset || ''}">
       </div>
       <div class="field-hint">Crear en Cloudinary Dashboard → Settings → Upload → Upload Presets</div>
     </div>
@@ -370,10 +423,10 @@ ${BASE_CSS}
       API para desarrolladores
     </h2>
     <p style="font-size:13px;color:var(--text-secondary);line-height:1.7;margin-bottom:16px">
-      Esta plataforma expone una REST API completa para que conectes tu propia aplicación. Puedes subir archivos, listarlos, descargarlos y eliminarlos desde cualquier lenguaje de programación usando los endpoints que configuraste aquí arriba. La documentación incluye ejemplos de código en Node.js, Python, Java y cURL, y está disponible en español, inglés y portugués.
+      Cada carpeta que vincules genera automaticamente un workspace con API REST. Puedes subir archivos, listarlos, descargarlos y eliminarlos desde cualquier lenguaje. Documentacion completa con ejemplos en Node.js, Python, Java y cURL, disponible en 3 idiomas.
     </p>
     <a href="/api/docs" target="_blank" class="btn btn-primary" style="width:100%;justify-content:center">
-      ${IC.book} Ver documentación de la API
+      ${IC.book} Ver documentacion de la API
     </a>
   </div>
 
@@ -393,6 +446,34 @@ document.getElementById('enableCld').addEventListener('change', e => {
   document.getElementById('cldFields').classList.toggle('visible', e.target.checked);
 });
 
+function extractFolderId(input) {
+  const s = (input || '').trim();
+  if (!s) return '';
+  // https://drive.google.com/drive/folders/1BufFhWJG_SlP36qAfcLSVm0u2SvcjGdT
+  const m = s.match(/folders\/([a-zA-Z0-9_-]{10,})/);
+  if (m) return m[1];
+  // Just the ID directly
+  if (/^[a-zA-Z0-9_-]{10,}$/.test(s)) return s;
+  return s;
+}
+
+function addFolderEntry(name, folderId) {
+  const list = document.getElementById('folderList');
+  const idx = list.children.length;
+  const div = document.createElement('div');
+  div.className = 'folder-entry';
+  div.dataset.index = idx;
+  div.innerHTML =
+    '<div class="folder-entry-top">' +
+      '<input type="text" class="folder-name" placeholder="Nombre (ej: Mi app de musica)" value="' + (name||'') + '">' +
+      '<button class="btn-remove" onclick="this.closest(\\'.folder-entry\\').remove()" title="Quitar">${IC.x}</button>' +
+    '</div>' +
+    '<div class="folder-entry-bottom">' +
+      '<input type="text" class="folder-url" placeholder="https://drive.google.com/drive/folders/... o solo el ID" value="' + (folderId||'') + '">' +
+    '</div>';
+  list.appendChild(div);
+}
+
 async function saveConfig() {
   const btn = document.getElementById('saveBtn');
   const status = document.getElementById('saveStatus');
@@ -401,12 +482,10 @@ async function saveConfig() {
   status.innerHTML = '';
 
   const driveJson = document.getElementById('driveJson').value.trim();
-  const driveFolder = document.getElementById('driveFolder').value.trim();
-  const enableCloud = document.getElementById('enableCld').checked;
   const adminPwd = document.getElementById('adminPwd').value.trim();
+  const enableCloud = document.getElementById('enableCld').checked;
 
   if (!driveJson) { showErr('El Service Account JSON es obligatorio'); return; }
-  if (!driveFolder) { showErr('El Folder ID es obligatorio'); return; }
 
   let creds;
   try {
@@ -414,7 +493,23 @@ async function saveConfig() {
     if (!creds.client_email || !creds.private_key) throw new Error('Campos faltantes');
   } catch (e) { showErr('JSON invalido: ' + e.message); return; }
 
-  const config = { drive_credentials: creds, drive_folder_id: driveFolder, admin_password: adminPwd || null };
+  // Collect all folders
+  const folderEntries = document.querySelectorAll('.folder-entry');
+  const folders = [];
+  let folderError = '';
+  folderEntries.forEach(entry => {
+    const name = entry.querySelector('.folder-name').value.trim();
+    const rawId = entry.querySelector('.folder-url').value.trim();
+    const folderId = extractFolderId(rawId);
+    if (!name && !rawId) return;
+    if (!name) { folderError = 'Cada carpeta necesita un nombre'; return; }
+    if (!folderId || !/^[a-zA-Z0-9_-]{10,}$/.test(folderId)) { folderError = 'ID de carpeta invalido para "' + name + '"'; return; }
+    folders.push({ name, drive_folder_id: folderId });
+  });
+  if (folderError) { showErr(folderError); return; }
+  if (folders.length === 0) { showErr('Agrega al menos una carpeta de Google Drive'); return; }
+
+  const config = { drive_credentials: creds, folders, admin_password: adminPwd || null };
   if (enableCloud) {
     config.cloudinary_cloud_name = document.getElementById('cloudName').value.trim();
     config.cloudinary_upload_preset = document.getElementById('uploadPreset').value.trim();
@@ -424,7 +519,7 @@ async function saveConfig() {
   try {
     const res = await fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(config) });
     const data = await res.json();
-    if (data.success) { showOk('Configuracion guardada. Redirigiendo...'); setTimeout(() => location.reload(), 1200); }
+    if (data.success) { showOk('Configuracion guardada. Creando espacios...'); setTimeout(() => location.reload(), 1500); }
     else showErr(data.error || 'Error desconocido');
   } catch (e) { showErr('Error de conexion: ' + e.message); }
   btn.disabled = false;
