@@ -1,0 +1,15 @@
+name = "cloud-media-host"
+main = "src/worker.js"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Cloudflare KV - Base de datos de archivos
+[[kv_namespaces]]
+binding = "MEDIA_KV"
+id = "TU_KV_NAMESPACE_ID_AQUI"
+
+# Variables de entorno (secrets van en .dev.vars)
+[vars]
+ENVIRONMENT = "production"
+MAX_FILE_SIZE = "104857600" # 100MB
+ALLOWED_TYPES = "audio/mpeg,video/mp4,application/zip,application/x-zip-compressed"
