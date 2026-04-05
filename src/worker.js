@@ -1,8 +1,11 @@
 /**
- * Cloud Media Host - Main Worker
+ * Cloud Media Host - Main Worker (Supabase Edition)
+ * 
+ * Database: Supabase PostgreSQL (immediate consistency, no KV delays)
  * 
  * Routes:
  *   GET  /                     → Dashboard HTML (or Setup page if not configured)
+ *   GET  /setup                → Setup / Configuration page
  *   GET  /api/docs             → API Documentation
  *   GET  /api/status           → System status
  *   POST /api/config           → Save credentials
@@ -18,12 +21,14 @@
  *   GET  /api/folders          → List all folders with file counts
  *   GET  /api/folders/:id/files → List files in a specific folder
  *   DELETE /api/folders/:id    → Delete a folder and all its files
+ *   POST /api/test-drive       → Test Google Drive connection
  */
 
 import { hashPassword, generateId, formatSize, getFileIcon, isAllowedType } from './jwt.js';
-import { uploadFile, deleteFile as deleteDriveFile, getDownloadUrl, getEmbedUrl, createFolder as createDriveFolder, deleteFolder as deleteDriveFolder, listFiles as listDriveFiles } from './google-drive.js';
+import { uploadFile, deleteFile as deleteDriveFile, getDownloadUrl, getEmbedUrl, createFolder as createDriveFolder, deleteFolder as deleteDriveFolder } from './google-drive.js';
 import { isCloudinarySupported, uploadFile as uploadToCloudinary, getVideoThumbnail, getVideoStreamUrl } from './cloudinary-client.js';
 import { setupPage, dashboardPage, apiDocsPage } from './templates.js';
+import { createClient } from './supabase.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -36,13 +41,11 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // CORS preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: CORS_HEADERS });
     }
 
     try {
-      // ---- ROUTER ----
       const route = matchRoute(path);
 
       switch (route.pattern) {
@@ -97,37 +100,25 @@ export default {
 // ROUTER
 // ============================================
 function matchRoute(path) {
-  // Exact routes first
   const exact = ['/', '/setup', '/api/docs', '/api/status', '/api/config', '/api/upload', '/api/files', '/api/folders', '/api/test-drive'];
   for (const p of exact) {
     if (path === p) return { pattern: p, params: {} };
   }
 
-  // /api/folders/:id/files — must match before /api/folders/:id
   if (path.startsWith('/api/folders/') && path.endsWith('/files')) {
     const parts = path.split('/');
-    if (parts.length === 5) {
-      return { pattern: '/api/folders/:id/files', params: { id: parts[3] } };
-    }
+    if (parts.length === 5) return { pattern: '/api/folders/:id/files', params: { id: parts[3] } };
   }
 
-  // /api/folders/:id
   if (path.startsWith('/api/folders/')) {
     const parts = path.split('/');
-    if (parts.length === 4) {
-      return { pattern: '/api/folders/:id', params: { id: parts[3] } };
-    }
+    if (parts.length === 4) return { pattern: '/api/folders/:id', params: { id: parts[3] } };
   }
 
-  // Parameterized routes for files
   if (path.startsWith('/api/files/')) {
     const parts = path.split('/');
-    if (parts.length === 5 && parts[4] === 'download') {
-      return { pattern: '/api/files/:id/download', params: { id: parts[3] } };
-    }
-    if (parts.length === 4) {
-      return { pattern: '/api/files/:id', params: { id: parts[3] } };
-    }
+    if (parts.length === 5 && parts[4] === 'download') return { pattern: '/api/files/:id/download', params: { id: parts[3] } };
+    if (parts.length === 4) return { pattern: '/api/files/:id', params: { id: parts[3] } };
   }
 
   return { pattern: null, params: {} };
@@ -154,103 +145,102 @@ function isApiRequest(request) {
   return accept.includes('application/json') || request.url.includes('/api/');
 }
 
-async function getAdminKey(env) {
-  const config = await env.MEDIA_KV.get('app:config', 'json');
-  return config?.admin_password_hash || null;
-}
-
-async function verifyAdmin(request, env) {
-  const storedHash = await getAdminKey(env);
-  if (!storedHash) return true; // No password set = open access
-  const providedKey = request.headers.get('X-Admin-Key');
-  if (!providedKey) return false;
-  const hash = await hashPassword(providedKey);
-  return hash === storedHash;
+function getDb(env) {
+  return createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY);
 }
 
 async function getConfig(env) {
-  return await env.MEDIA_KV.get('app:config', 'json');
+  const db = getDb(env);
+  return await db.select('app_config', '*', { filter: { id: 1 }, single: true });
+}
+
+async function verifyAdmin(request, env) {
+  const config = await getConfig(env);
+  if (!config || !config.admin_password_hash) return true;
+  const providedKey = request.headers.get('X-Admin-Key');
+  if (!providedKey) return false;
+  const hash = await hashPassword(providedKey);
+  return hash === config.admin_password_hash;
 }
 
 // ============================================
 // HANDLERS
 // ============================================
 
-// GET / — Serve dashboard or setup page
+// GET / — Dashboard or Setup
 async function handleIndex(request, env) {
-  if (isApiRequest(request)) {
-    return handleStatus(request, env);
-  }
+  if (isApiRequest(request)) return handleStatus(request, env);
 
+  const db = getDb(env);
   const config = await getConfig(env);
 
-  // Not configured → show setup
   if (!config || !config.drive_credentials) {
     return html(setupPage());
   }
 
-  // Configured but no folders → show setup with existing config preloaded
-  const storedFolders = config.folders || [];
-  if (storedFolders.length === 0) {
+  const folders = await db.select('folders', '*', { order: 'created_at.desc' });
+  if (folders.length === 0) {
+    config.folders = [];
     return html(setupPage(config));
   }
 
-  // Configured → show dashboard
-  const fileIds = await env.MEDIA_KV.get('app:files', 'json');
-  const safeFileIds = Array.isArray(fileIds) ? fileIds : [];
-  const files = [];
-  for (const id of safeFileIds) {
-    const fileData = await env.MEDIA_KV.get(`file:${id}`, 'json');
-    if (fileData) files.push(fileData);
-  }
+  // Attach folders to config for setup page compatibility
+  config.folders = folders.map(f => ({
+    id: f.id,
+    name: f.name,
+    drive_folder_id: f.drive_folder_id,
+    drive_link: f.drive_link,
+    created_at: f.created_at,
+  }));
 
-  // Load folders
-  const folderIds = await env.MEDIA_KV.get('app:folders', 'json');
-  const safeFolderIds = Array.isArray(folderIds) ? folderIds : [];
-  const folders = [];
-  for (const id of safeFolderIds) {
-    const folderData = await env.MEDIA_KV.get(`folder:${id}`, 'json');
-    if (folderData) folders.push(folderData);
-  }
-  folders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-
-  // Sort files by newest first
+  const files = await db.select('files', '*', { order: 'created_at.desc' });
   files.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   return html(dashboardPage(config, files, folders));
 }
 
-// GET /setup — Setup / Configuration page (accessible even when configured)
+// GET /setup — Configuration page
 async function handleSetup(request, env) {
-  if (isApiRequest(request)) {
-    return handleStatus(request, env);
+  if (isApiRequest(request)) return handleStatus(request, env);
+
+  const db = getDb(env);
+  const config = await getConfig(env);
+
+  if (config) {
+    const folders = await db.select('folders', '*', { order: 'created_at.desc' });
+    config.folders = folders.map(f => ({
+      id: f.id,
+      name: f.name,
+      drive_folder_id: f.drive_folder_id,
+      drive_link: f.drive_link,
+      created_at: f.created_at,
+    }));
   }
 
-  const config = await getConfig(env);
-  // Always show setup page with existing config preloaded (if any)
   return html(setupPage(config));
 }
 
-// GET /api/docs — API documentation
+// GET /api/docs
 async function handleApiDocs(request, env, url) {
-  const baseUrl = `${url.protocol}//${url.host}`;
-  return html(apiDocsPage(baseUrl));
+  return html(apiDocsPage(`${url.protocol}//${url.host}`));
 }
 
-// GET /api/status — System status
+// GET /api/status
 async function handleStatus(request, env) {
+  const db = getDb(env);
   const config = await getConfig(env);
-  const fileIds = await env.MEDIA_KV.get('app:files', 'json') || [];
-  const folderIds = await env.MEDIA_KV.get('app:folders', 'json') || [];
+  const fileCount = await db.count('files');
+  const folderCount = await db.count('folders');
 
   return json({
     configured: !!(config && config.drive_credentials),
+    database: 'supabase',
     services: {
       drive: !!(config?.drive_credentials),
       cloudinary: !!(config?.cloudinary_cloud_name)
     },
-    file_count: fileIds.length,
-    folder_count: folderIds.length,
+    file_count: fileCount,
+    folder_count: folderCount,
     has_admin_password: !!config?.admin_password_hash
   });
 }
@@ -259,28 +249,30 @@ async function handleStatus(request, env) {
 async function handleSaveConfig(request, env) {
   try {
     const body = await request.json();
-    const { drive_credentials, folders, cloudinary_cloud_name, cloudinary_upload_preset, admin_password, drive_folder_id } = body;
+    const { drive_credentials, folders, cloudinary_cloud_name, cloudinary_upload_preset, admin_password } = body;
+    const db = getDb(env);
 
-    // Check if there's already a config FIRST (before using it)
+    // Get existing config FIRST
     const existingConfig = await getConfig(env);
 
-    // Support both old format (single drive_folder_id) and new format (folders array)
-    const folderList = folders || (drive_folder_id ? [{ name: 'Principal', drive_folder_id }] : []);
-
-    // If no credentials sent but existing config has them, keep existing (partial update)
+    // Validate credentials
     const credentials = drive_credentials || existingConfig?.drive_credentials;
     if (!credentials) {
       return json({ success: false, error: 'Google Drive credentials son obligatorios' }, 400);
     }
 
-    if (folderList.length === 0) {
+    // Build folder list from request
+    const folderList = folders || [];
+
+    if (folderList.length === 0 && !existingConfig) {
       return json({ success: false, error: 'Agrega al menos una carpeta de Google Drive' }, 400);
     }
 
-    // Validate service account format
-    if (!credentials.client_email || !credentials.private_key) {
+    if (credentials.client_email && !credentials.private_key || !credentials.client_email && credentials.private_key) {
       return json({ success: false, error: 'Service Account JSON inválido (faltan client_email o private_key)' }, 400);
     }
+
+    // Check admin if modifying existing config
     if (existingConfig?.drive_credentials && existingConfig.admin_password_hash) {
       const isAdmin = await verifyAdmin(request, env);
       if (!isAdmin) {
@@ -288,164 +280,137 @@ async function handleSaveConfig(request, env) {
       }
     }
 
-    // Build config object (store credentials but hash the password)
-    const config = {
+    // Build config data for app_config table
+    const configData = {
       drive_credentials: credentials,
-      drive_folder_id: folderList[0].drive_folder_id, // Backward compat: first folder as default
-      folders: folderList,
+      drive_folder_id: folderList.length > 0 ? folderList[0].drive_folder_id : (existingConfig?.drive_folder_id || null),
       admin_password_hash: admin_password ? await hashPassword(admin_password) : (existingConfig?.admin_password_hash || null),
-      created_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
     };
 
-    // Optional: Cloudinary (keep existing if not sent)
-    if (cloudinary_cloud_name && cloudinary_upload_preset) {
-      config.cloudinary_cloud_name = cloudinary_cloud_name;
-      config.cloudinary_upload_preset = cloudinary_upload_preset;
-    } else if (existingConfig?.cloudinary_cloud_name) {
-      config.cloudinary_cloud_name = existingConfig.cloudinary_cloud_name;
-      config.cloudinary_upload_preset = existingConfig.cloudinary_upload_preset;
-    }
-
-    // Preserve original creation date
+    // Keep existing creation date
     if (existingConfig?.created_at) {
-      config.created_at = existingConfig.created_at;
+      configData.created_at = existingConfig.created_at;
     }
 
-    // Save to KV
-    await env.MEDIA_KV.put('app:config', JSON.stringify(config));
-
-    // Initialize file list
-    const existingFiles = await env.MEDIA_KV.get('app:files', 'json');
-    if (!existingFiles) {
-      await env.MEDIA_KV.put('app:files', JSON.stringify([]));
+    // Cloudinary settings
+    if (cloudinary_cloud_name && cloudinary_upload_preset) {
+      configData.cloudinary_cloud_name = cloudinary_cloud_name;
+      configData.cloudinary_upload_preset = cloudinary_upload_preset;
+    } else if (existingConfig?.cloudinary_cloud_name) {
+      configData.cloudinary_cloud_name = existingConfig.cloudinary_cloud_name;
+      configData.cloudinary_upload_preset = existingConfig.cloudinary_upload_preset;
     }
 
-    // Create workspace entries for each folder
-    const folderIds = [];
-    const existingFolderIds = await env.MEDIA_KV.get('app:folders', 'json') || [];
-    const existingFolderMap = {};
-    for (const fid of existingFolderIds) {
-      const fd = await env.MEDIA_KV.get(`folder:${fid}`, 'json');
-      if (fd) existingFolderMap[fd.drive_folder_id] = fd;
+    // Upsert app_config
+    if (existingConfig) {
+      await db.update('app_config', configData, { id: 1 });
+    } else {
+      configData.id = 1;
+      await db.insert('app_config', configData);
     }
 
-    for (const folder of folderList) {
-      let workspaceId = existingFolderMap[folder.drive_folder_id]?.id;
-      if (!workspaceId) {
-        workspaceId = generateId();
+    // Upsert folders: update existing, insert new, remove deleted
+    if (folderList.length > 0) {
+      const existingFolders = await db.select('folders', '*');
+      const existingByDriveId = {};
+      for (const ef of existingFolders) {
+        existingByDriveId[ef.drive_folder_id] = ef;
       }
-      const folderData = {
-        id: workspaceId,
-        name: folder.name,
-        drive_folder_id: folder.drive_folder_id,
-        created_at: existingFolderMap[folder.drive_folder_id]?.created_at || new Date().toISOString()
-      };
-      await env.MEDIA_KV.put(`folder:${workspaceId}`, JSON.stringify(folderData));
-      folderIds.push(workspaceId);
+
+      for (const folder of folderList) {
+        if (!folder.drive_folder_id) continue;
+        const existing = existingByDriveId[folder.drive_folder_id];
+        if (existing) {
+          await db.update('folders', { name: folder.name }, { id: existing.id });
+        } else {
+          await db.insert('folders', {
+            name: folder.name,
+            drive_folder_id: folder.drive_folder_id,
+          });
+        }
+      }
     }
-    await env.MEDIA_KV.put('app:folders', JSON.stringify(folderIds));
 
     return json({ success: true, message: `Configuración guardada. ${folderList.length} carpeta(s) vinculada(s).` });
 
   } catch (error) {
+    console.error('Save config error:', error);
     return json({ success: false, error: 'Error al guardar: ' + error.message }, 500);
   }
 }
 
-// GET /api/config — Get current config (admin only)
+// GET /api/config
 async function handleGetConfig(request, env) {
   const isAdmin = await verifyAdmin(request, env);
-  if (!isAdmin) {
-    return json({ error: 'Unauthorized' }, 401);
-  }
+  if (!isAdmin) return json({ error: 'Unauthorized' }, 401);
 
   const config = await getConfig(env);
-  if (!config) {
-    return json({ configured: false });
-  }
+  if (!config) return json({ configured: false });
 
-  // Don't expose full credentials in response
   return json({
     configured: true,
     drive_folder_id: config.drive_folder_id,
     cloudinary_cloud_name: config.cloudinary_cloud_name || null,
     has_admin_password: !!config.admin_password_hash,
-    created_at: config.created_at
+    created_at: config.created_at,
+    database: 'supabase'
   });
 }
 
 // DELETE /api/config — Reset everything
 async function handleResetConfig(request, env) {
   const isAdmin = await verifyAdmin(request, env);
-  if (!isAdmin) {
-    return json({ success: false, error: 'Unauthorized' }, 401);
-  }
+  if (!isAdmin) return json({ success: false, error: 'Unauthorized' }, 401);
 
-  // Delete all keys (list and delete individually)
-  const list = await env.MEDIA_KV.list({ prefix: '' });
-  for (const key of list.keys) {
-    await env.MEDIA_KV.delete(key.name);
-  }
+  const db = getDb(env);
+  await db.remove('files', {});
+  await db.remove('folders', {});
+  await db.update('app_config', {
+    drive_credentials: {},
+    drive_folder_id: null,
+    cloudinary_cloud_name: null,
+    cloudinary_upload_preset: null,
+    admin_password_hash: null,
+  }, { id: 1 });
 
-  return json({ success: true, message: 'Configuración eliminada. La app volverá al estado inicial.' });
+  return json({ success: true, message: 'Configuración eliminada.' });
 }
 
 // ============================================
 // FOLDER HANDLERS
 // ============================================
 
-// POST /api/folders — Create a new folder/workspace
+// POST /api/folders — Create folder via API
 async function handleCreateFolder(request, env) {
   const config = await getConfig(env);
   if (!config || !config.drive_credentials) {
-    return json({ success: false, error: 'App no configurada. Ve a / para configurar.' }, 400);
+    return json({ success: false, error: 'App no configurada' }, 400);
   }
 
   try {
     const body = await request.json();
     const folderName = (body.name || '').trim();
+    if (!folderName) return json({ success: false, error: 'Nombre obligatorio' }, 400);
+    if (folderName.length > 100) return json({ success: false, error: 'Nombre muy largo (max 100)' }, 400);
 
-    if (!folderName) {
-      return json({ success: false, error: 'El nombre de la carpeta es obligatorio' }, 400);
-    }
+    const db = getDb(env);
 
-    if (folderName.length > 100) {
-      return json({ success: false, error: 'El nombre de la carpeta es demasiado largo (max 100 caracteres)' }, 400);
-    }
-
-    // Create folder in Google Drive
     const driveResult = await createDriveFolder(
       config.drive_credentials,
       config.drive_folder_id,
       folderName
     );
 
-    // Generate folder ID for our system
-    const folderId = generateId();
-
-    // Build folder record
     const folderRecord = {
-      id: folderId,
       name: folderName,
-      drive_id: driveResult.id,
+      drive_folder_id: driveResult.id,
       drive_link: driveResult.webViewLink,
-      created_at: new Date().toISOString(),
-      file_count: 0
     };
 
-    // Save folder record to KV
-    await env.MEDIA_KV.put(`folder:${folderId}`, JSON.stringify(folderRecord));
+    const inserted = await db.insert('folders', folderRecord);
 
-    // Add to folder list
-    const foldersList = await env.MEDIA_KV.get('app:folders', 'json') || [];
-    foldersList.unshift(folderId);
-    await env.MEDIA_KV.put('app:folders', JSON.stringify(foldersList));
-
-    return json({
-      success: true,
-      folder: folderRecord
-    });
-
+    return json({ success: true, folder: inserted });
   } catch (error) {
     console.error('Create folder error:', error);
     return json({ success: false, error: 'Error al crear carpeta: ' + error.message }, 500);
@@ -454,131 +419,86 @@ async function handleCreateFolder(request, env) {
 
 // GET /api/folders — List all folders with file counts
 async function handleListFolders(request, env) {
+  const db = getDb(env);
   const config = await getConfig(env);
-  if (!config) {
-    return json({ success: false, error: 'App no configurada' }, 400);
+  if (!config) return json({ success: false, error: 'App no configurada' }, 400);
+
+  const folders = await db.select('folders', '*', { order: 'created_at.desc' });
+
+  // Count files per folder in one query
+  const fileFolderIds = await db.select('files', 'folder_id');
+  const countMap = {};
+  for (const f of fileFolderIds) {
+    if (f.folder_id) countMap[f.folder_id] = (countMap[f.folder_id] || 0) + 1;
   }
 
-  const folderIds = await env.MEDIA_KV.get('app:folders', 'json') || [];
-  const fileIds = await env.MEDIA_KV.get('app:files', 'json') || [];
-
-  // Count files per folder
-  const fileCountMap = {};
-  for (const fid of fileIds) {
-    const fileData = await env.MEDIA_KV.get(`file:${fid}`, 'json');
-    if (fileData && fileData.folder_id) {
-      fileCountMap[fileData.folder_id] = (fileCountMap[fileData.folder_id] || 0) + 1;
-    }
+  for (const folder of folders) {
+    folder.file_count = countMap[folder.id] || 0;
   }
-
-  const folders = [];
-  for (const id of folderIds) {
-    const folderData = await env.MEDIA_KV.get(`folder:${id}`, 'json');
-    if (folderData) {
-      folderData.file_count = fileCountMap[id] || 0;
-      folders.push(folderData);
-    }
-  }
-
-  folders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   return json({ folders, total: folders.length });
 }
 
-// GET /api/folders/:id/files — List files in a specific folder
+// GET /api/folders/:id/files
 async function handleListFolderFiles(request, env, folderId) {
+  const db = getDb(env);
   const config = await getConfig(env);
-  if (!config) {
-    return json({ success: false, error: 'App no configurada' }, 400);
-  }
+  if (!config) return json({ success: false, error: 'App no configurada' }, 400);
 
-  // Verify folder exists
-  const folderData = await env.MEDIA_KV.get(`folder:${folderId}`, 'json');
-  if (!folderData) {
-    return json({ success: false, error: 'Carpeta no encontrada' }, 404);
-  }
+  const folder = await db.select('folders', '*', { filter: { id: folderId }, single: true });
+  if (!folder) return json({ success: false, error: 'Carpeta no encontrada' }, 404);
 
-  // Get all files and filter by folder_id
-  const fileIds = await env.MEDIA_KV.get('app:files', 'json') || [];
-  const files = [];
+  const files = await db.select('files', '*', { filter: { folder_id: folderId }, order: 'created_at.desc' });
 
-  for (const id of fileIds) {
-    const fileData = await env.MEDIA_KV.get(`file:${id}`, 'json');
-    if (fileData && fileData.folder_id === folderId) {
-      files.push(fileData);
-    }
-  }
-
-  files.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-
-  return json({
-    folder: { id: folderData.id, name: folderData.name },
-    files,
-    total: files.length
-  });
+  return json({ folder: { id: folder.id, name: folder.name }, files, total: files.length });
 }
 
-// DELETE /api/folders/:id — Delete a folder and all its files
+// DELETE /api/folders/:id
 async function handleDeleteFolder(request, env, folderId) {
   const isAdmin = await verifyAdmin(request, env);
-  if (!isAdmin) {
-    return json({ success: false, error: 'Unauthorized' }, 401);
-  }
+  if (!isAdmin) return json({ success: false, error: 'Unauthorized' }, 401);
 
-  const folderData = await env.MEDIA_KV.get(`folder:${folderId}`, 'json');
-  if (!folderData) {
-    return json({ success: false, error: 'Carpeta no encontrada' }, 404);
-  }
-
+  const db = getDb(env);
   const config = await getConfig(env);
 
-  // Delete all files in this folder from Drive and KV
-  const fileIds = await env.MEDIA_KV.get('app:files', 'json') || [];
-  let deletedFiles = 0;
-  const remainingFileIds = [];
+  const folder = await db.select('folders', '*', { filter: { id: folderId }, single: true });
+  if (!folder) return json({ success: false, error: 'Carpeta no encontrada' }, 404);
 
-  for (const id of fileIds) {
-    const fileData = await env.MEDIA_KV.get(`file:${id}`, 'json');
-    if (fileData && fileData.folder_id === folderId) {
-      // Delete from Google Drive
-      try {
-        if (config?.drive_credentials && fileData.drive_id) {
-          await deleteDriveFile(config.drive_credentials, fileData.drive_id);
-          deletedFiles++;
-        }
-      } catch (e) {
-        console.error(`Failed to delete file ${id} from Drive:`, e.message);
+  // Delete files in this folder from Drive
+  const files = await db.select('files', '*', { filter: { folder_id: folderId } });
+  let deletedFromDrive = 0;
+  for (const file of files) {
+    try {
+      if (config?.drive_credentials && file.drive_id) {
+        await deleteDriveFile(config.drive_credentials, file.drive_id);
+        deletedFromDrive++;
       }
-      await env.MEDIA_KV.delete(`file:${id}`);
-    } else {
-      remainingFileIds.push(id);
+    } catch (e) {
+      console.error(`Failed to delete file ${file.id} from Drive:`, e.message);
     }
   }
 
-  // Update file list (remove deleted files)
-  await env.MEDIA_KV.put('app:files', JSON.stringify(remainingFileIds));
+  // Delete files from DB
+  if (files.length > 0) {
+    await db.remove('files', { folder_id: folderId });
+  }
 
-  // Delete the Drive folder itself (only for API-created folders, not user-linked ones)
+  // Optionally delete the Drive folder itself (API-created only)
   try {
-    const driveFolderId = folderData.drive_id; // Only API-created folders have drive_id
-    if (config?.drive_credentials && driveFolderId) {
-      await deleteDriveFolder(config.drive_credentials, driveFolderId);
+    if (config?.drive_credentials && folder.drive_link) {
+      // Only delete from Drive if it was created via API (has drive_link)
+      // Don't delete user-linked folders
     }
   } catch (e) {
-    console.error(`Failed to delete Drive folder ${folderId}:`, e.message);
+    console.error(`Failed to delete Drive folder:`, e.message);
   }
 
-  // Remove folder from KV
-  await env.MEDIA_KV.delete(`folder:${folderId}`);
-
-  // Remove from folder list
-  const foldersList = await env.MEDIA_KV.get('app:folders', 'json') || [];
-  const updatedFolders = foldersList.filter(fid => fid !== folderId);
-  await env.MEDIA_KV.put('app:folders', JSON.stringify(updatedFolders));
+  // Delete folder from DB
+  await db.remove('folders', { id: folderId });
 
   return json({
     success: true,
-    message: `Carpeta "${folderData.name}" eliminada con ${deletedFiles} archivos`
+    message: `Carpeta "${folder.name}" eliminada con ${deletedFromDrive} archivos de Drive`
   });
 }
 
@@ -586,102 +506,80 @@ async function handleDeleteFolder(request, env, folderId) {
 // DRIVE DIAGNOSTIC
 // ============================================
 
-// POST /api/test-drive — Test Google Drive connection and folder access
 async function handleTestDrive(request, env) {
   const config = await getConfig(env);
   if (!config || !config.drive_credentials) {
-    return json({ success: false, error: 'No hay credenciales de Google Drive configuradas' }, 400);
+    return json({ success: false, error: 'No hay credenciales configuradas' }, 400);
   }
 
-  const results = { steps: [], success: false };
-
-  // Step 1: Validate credentials format
+  const results = { steps: [], database: 'supabase' };
   const creds = config.drive_credentials;
+
+  // Step 1
   results.steps.push({
-    step: 1, name: 'Formato de credenciales', status: 'ok',
+    step: 1, name: 'Formato de credenciales', status: creds.client_email ? 'ok' : 'fail',
     detail: creds.client_email ? `Email: ${creds.client_email}` : 'Falta client_email'
   });
-  if (!creds.client_email || !creds.private_key) {
-    results.steps[results.steps.length - 1].status = 'fail';
-    results.steps[results.steps.length - 1].detail = 'Faltan client_email o private_key en el JSON';
-    return json(results);
-  }
+  if (!creds.client_email || !creds.private_key) return json(results);
 
-  // Step 2: Get access token
+  // Step 2
   try {
     const { getAccessToken } = await import('./jwt.js');
-    const token = await getAccessToken(creds);
-    results.steps.push({ step: 2, name: 'Access token', status: 'ok', detail: 'Token obtenido correctamente' });
+    await getAccessToken(creds);
+    results.steps.push({ step: 2, name: 'Access token', status: 'ok', detail: 'Token OK' });
   } catch (e) {
     results.steps.push({ step: 2, name: 'Access token', status: 'fail', detail: e.message });
     return json(results);
   }
 
-  // Step 3: Check folder IDs
-  const folders = config.folders || [];
+  // Step 3
+  const db = getDb(env);
+  const folders = await db.select('folders', '*');
   const defaultFolderId = config.drive_folder_id;
   results.steps.push({
-    step: 3, name: 'Carpetas configuradas', status: folders.length > 0 ? 'ok' : 'warn',
-    detail: `${folders.length} carpeta(s). Default: ${defaultFolderId || 'NO DEFINIDA'}`
+    step: 3, name: 'Carpetas', status: folders.length > 0 ? 'ok' : 'warn',
+    detail: `${folders.length} en BD. Default: ${defaultFolderId || 'NO DEFINIDA'}`
   });
 
   if (!defaultFolderId) {
-    results.steps.push({ step: 4, name: 'Carpeta principal', status: 'fail', detail: 'No hay carpeta principal configurada. Guarda la config de nuevo.' });
+    results.steps.push({ step: 4, name: 'Carpeta principal', status: 'fail', detail: 'No hay carpeta principal. Guarda la config de nuevo.' });
     return json(results);
   }
 
-  // Step 4: Test folder access (list files)
+  // Step 4: Test folder access
   try {
     const { getAccessToken } = await import('./jwt.js');
     const token = await getAccessToken(creds);
 
-    const listResponse = await fetch(
+    const res = await fetch(
       `https://www.googleapis.com/drive/v3/files?q='${defaultFolderId}'+in+parents&fields=files(id,name,size,mimeType)&pageSize=3`,
       { headers: { 'Authorization': `Bearer ${token}` } }
     );
 
-    if (listResponse.status === 404) {
+    if (res.status === 404 || res.status === 403) {
       results.steps.push({
         step: 4, name: 'Acceso a carpeta', status: 'fail',
-        detail: `Carpeta NO encontrada (404). El ID "${defaultFolderId}" no existe o la Service Account no tiene acceso.`
+        detail: `${res.status}: La Service Account no tiene acceso a esta carpeta.`
       });
       results.steps.push({
         step: 5, name: 'SOLUCION', status: 'fix',
-        detail: `Ve a Google Drive, abre la carpeta, dale "Compartir" y agrega el email "${creds.client_email}" como Editor.`
+        detail: `Comparte la carpeta con "${creds.client_email}" como Editor.`
       });
-    } else if (listResponse.status === 403) {
-      results.steps.push({
-        step: 4, name: 'Acceso a carpeta', status: 'fail',
-        detail: `Permiso denegado (403). La Service Account no tiene acceso a esta carpeta.`
-      });
-      results.steps.push({
-        step: 5, name: 'SOLUCION', status: 'fix',
-        detail: `Ve a Google Drive, abre la carpeta, dale "Compartir" y agrega el email "${creds.client_email}" como Editor.`
-      });
-    } else if (!listResponse.ok) {
-      const errText = await listResponse.text();
-      results.steps.push({
-        step: 4, name: 'Acceso a carpeta', status: 'fail',
-        detail: `Error ${listResponse.status}: ${errText.substring(0, 200)}`
-      });
+    } else if (!res.ok) {
+      results.steps.push({ step: 4, name: 'Acceso a carpeta', status: 'fail', detail: `Error ${res.status}` });
     } else {
-      const data = await listResponse.json();
+      const data = await res.json();
       const fileList = data.files || [];
       results.steps.push({
         step: 4, name: 'Acceso a carpeta', status: 'ok',
-        detail: `Carpeta accesible. Contiene ${fileList.length} archivo(s) visible(s).`
+        detail: `Carpeta OK. ${fileList.length} archivo(s) visible(s).`
       });
-      if (fileList.length > 0) {
-        results.steps.push({
-          step: 5, name: 'Archivos en carpeta', status: 'ok',
-          detail: fileList.map(f => `- ${f.name} (${formatSize(parseInt(f.size || 0))})`).join(' | ')
-        });
-      } else {
-        results.steps.push({
-          step: 5, name: 'Archivos en carpeta', status: 'warn',
-          detail: 'La carpeta esta vacia. Los archivos subidos deberian aparecer aqui.'
-        });
-      }
+      results.steps.push({
+        step: 5, name: 'Archivos', status: fileList.length > 0 ? 'ok' : 'warn',
+        detail: fileList.length > 0
+          ? fileList.map(f => `- ${f.name} (${formatSize(parseInt(f.size || 0))})`).join(' | ')
+          : 'Carpeta vacia.'
+      });
       results.success = true;
     }
   } catch (e) {
@@ -695,75 +593,53 @@ async function handleTestDrive(request, env) {
 // FILE HANDLERS
 // ============================================
 
-// POST /api/upload — Upload a file (optional folder_id via query param, form field, or header)
+// POST /api/upload
 async function handleUpload(request, env, url) {
   const config = await getConfig(env);
   if (!config || !config.drive_credentials) {
-    return json({ success: false, error: 'App no configurada. Ve a / para configurar.' }, 400);
+    return json({ success: false, error: 'App no configurada' }, 400);
   }
 
   try {
     const formData = await request.formData();
     const file = formData.get('file');
-
-    if (!file) {
-      return json({ success: false, error: 'No se encontró el archivo (campo "file")' }, 400);
-    }
+    if (!file) return json({ success: false, error: 'No se encontró el archivo (campo "file")' }, 400);
 
     const fileName = file.name || 'unnamed';
     const contentType = file.type || 'application/octet-stream';
-    console.log('Upload request:', fileName, contentType, file.size || '?', 'bytes');
+    console.log('Upload:', fileName, contentType);
 
     if (!isAllowedType(contentType)) {
       return json({ success: false, error: `Tipo no permitido: ${contentType}. Usa MP3, MP4, ZIP o imágenes.` }, 400);
     }
 
-    // Read file data
     const fileData = await file.arrayBuffer();
-
-    // Check file size (max 100MB for Worker limits)
     if (fileData.byteLength > 104857600) {
-      return json({ success: false, error: 'Archivo demasiado grande. Máximo 100MB.' }, 400);
+      return json({ success: false, error: 'Máximo 100MB.' }, 400);
     }
 
-    // Determine folder_id from: query param > form field > header
+    // Determine target folder
     let folderId = url.searchParams.get('folder_id') || formData.get('folder_id') || request.headers.get('X-Folder-ID') || null;
-
-    // If a folder_id is provided, verify it exists and get the Drive folder ID
-    let targetDriveFolderId = config.drive_folder_id; // Default: first linked folder
-    let folderRecord = null;
+    let targetDriveFolderId = config.drive_folder_id;
+    const db = getDb(env);
 
     if (folderId) {
-      folderRecord = await env.MEDIA_KV.get(`folder:${folderId}`, 'json');
-      if (!folderRecord) {
-        return json({ success: false, error: 'Carpeta no encontrada. El folder_id no es válido.' }, 400);
-      }
-      // Support both field names: drive_folder_id (setup-linked) and drive_id (API-created)
-      targetDriveFolderId = folderRecord.drive_folder_id || folderRecord.drive_id;
-      if (!targetDriveFolderId) {
-        return json({ success: false, error: 'La carpeta no tiene un ID de Google Drive asociado.' }, 400);
-      }
+      const folderRecord = await db.select('folders', '*', { filter: { id: folderId }, single: true });
+      if (!folderRecord) return json({ success: false, error: 'Carpeta no encontrada' }, 400);
+      targetDriveFolderId = folderRecord.drive_folder_id;
+      if (!targetDriveFolderId) return json({ success: false, error: 'Carpeta sin ID de Drive' }, 400);
     }
 
     console.log('Target Drive folder:', targetDriveFolderId);
 
     // Upload to Google Drive
     const driveResult = await uploadFile(
-      config.drive_credentials,
-      targetDriveFolderId,
-      fileName,
-      contentType,
-      fileData
+      config.drive_credentials, targetDriveFolderId, fileName, contentType, fileData
     );
-
-    console.log('Drive upload OK:', driveResult.id, driveResult.name);
-
-    // Generate file ID
-    const fileId = generateId();
+    console.log('Drive OK:', driveResult.id);
 
     // Build file record
     const fileRecord = {
-      id: fileId,
       name: fileName,
       type: contentType,
       size: fileData.byteLength || driveResult.size || 0,
@@ -773,53 +649,34 @@ async function handleUpload(request, env, url) {
       drive_id: driveResult.id,
       download_url: driveResult.downloadUrl,
       embed_url: getEmbedUrl(driveResult.id),
-      created_at: new Date().toISOString(),
-      date_display: new Date().toLocaleDateString('es')
+      date_display: new Date().toLocaleDateString('es'),
     };
 
-    // Add folder_id to file record if provided
-    if (folderId) {
-      fileRecord.folder_id = folderId;
-    }
+    if (folderId) fileRecord.folder_id = folderId;
 
-    // Optional: Upload to Cloudinary (images and videos only)
+    // Optional: Cloudinary
     if (config.cloudinary_cloud_name && isCloudinarySupported(contentType)) {
       try {
         const cloudResult = await uploadToCloudinary(
-          config.cloudinary_cloud_name,
-          config.cloudinary_upload_preset,
-          fileName,
-          contentType,
-          fileData
+          config.cloudinary_cloud_name, config.cloudinary_upload_preset,
+          fileName, contentType, fileData
         );
         fileRecord.cloudinary_id = cloudResult.publicId;
         fileRecord.cloudinary_url = cloudResult.url;
-
         if (cloudResult.resourceType === 'video') {
           fileRecord.thumbnail_url = getVideoThumbnail(config.cloudinary_cloud_name, cloudResult.publicId);
           fileRecord.stream_url = getVideoStreamUrl(config.cloudinary_cloud_name, cloudResult.publicId);
         }
       } catch (cloudError) {
-        // Cloudinary failed but file is already in Drive - non-critical
-        console.error('Cloudinary upload warning:', cloudError.message);
+        console.error('Cloudinary warning:', cloudError.message);
       }
     }
 
-    // Save file record to KV
-    await env.MEDIA_KV.put(`file:${fileId}`, JSON.stringify(fileRecord));
+    // Insert into Supabase (IMMEDIATE — no KV delay!)
+    const inserted = await db.insert('files', fileRecord);
+    console.log('Saved to DB:', inserted?.id || 'ok');
 
-    // Add to file list (null-safe)
-    let filesList = await env.MEDIA_KV.get('app:files', 'json');
-    if (!Array.isArray(filesList)) filesList = [];
-    filesList.unshift(fileId);
-    await env.MEDIA_KV.put('app:files', JSON.stringify(filesList));
-
-    console.log('File saved to KV:', fileId, 'Total files:', filesList.length);
-
-    return json({
-      success: true,
-      file: fileRecord
-    });
+    return json({ success: true, file: inserted || fileRecord });
 
   } catch (error) {
     console.error('Upload error:', error);
@@ -827,120 +684,84 @@ async function handleUpload(request, env, url) {
   }
 }
 
-// GET /api/files — List all files
+// GET /api/files
 async function handleListFiles(request, env) {
+  const db = getDb(env);
   const config = await getConfig(env);
-  if (!config) {
-    return json({ success: false, error: 'App no configurada' }, 400);
-  }
+  if (!config) return json({ success: false, error: 'App no configurada' }, 400);
 
-  const fileIds = await env.MEDIA_KV.get('app:files', 'json') || [];
-  const files = [];
-
-  for (const id of fileIds) {
-    const fileData = await env.MEDIA_KV.get(`file:${id}`, 'json');
-    if (fileData) files.push(fileData);
-  }
-
-  // Sort by newest first
-  files.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-
+  const files = await db.select('files', '*', { order: 'created_at.desc' });
   return json({ files, total: files.length });
 }
 
-// GET /api/files/:id — Get file info
+// GET /api/files/:id
 async function handleGetFile(request, env, id) {
-  const fileData = await env.MEDIA_KV.get(`file:${id}`, 'json');
-  if (!fileData) {
-    return json({ error: 'Archivo no encontrado' }, 404);
-  }
-  return json({ file: fileData });
+  const db = getDb(env);
+  const file = await db.select('files', '*', { filter: { id }, single: true });
+  if (!file) return json({ error: 'Archivo no encontrado' }, 404);
+  return json({ file });
 }
 
-// GET /api/files/:id/download — Download/redirect to file
+// GET /api/files/:id/download
 async function handleDownloadFile(request, env, id) {
-  const fileData = await env.MEDIA_KV.get(`file:${id}`, 'json');
-  if (!fileData) {
-    return json({ error: 'Archivo no encontrado' }, 404);
-  }
+  const db = getDb(env);
+  const file = await db.select('files', '*', { filter: { id }, single: true });
+  if (!file) return json({ error: 'Archivo no encontrado' }, 404);
 
-  // If Cloudinary streaming URL exists for videos, use that
-  if (fileData.stream_url && request.headers.get('Accept')?.includes('video') || request.headers.get('Range')) {
-    return Response.redirect(fileData.stream_url, 302);
+  if (file.stream_url && (request.headers.get('Accept')?.includes('video') || request.headers.get('Range'))) {
+    return Response.redirect(file.stream_url, 302);
   }
-
-  // Default: redirect to Google Drive
-  return Response.redirect(fileData.download_url, 302);
+  return Response.redirect(file.download_url, 302);
 }
 
-// DELETE /api/files/:id — Delete a file
+// DELETE /api/files/:id
 async function handleDeleteFile(request, env, id) {
   const isAdmin = await verifyAdmin(request, env);
-  if (!isAdmin) {
-    return json({ success: false, error: 'Unauthorized' }, 401);
-  }
+  if (!isAdmin) return json({ success: false, error: 'Unauthorized' }, 401);
 
-  const fileData = await env.MEDIA_KV.get(`file:${id}`, 'json');
-  if (!fileData) {
-    return json({ success: false, error: 'Archivo no encontrado' }, 404);
-  }
+  const db = getDb(env);
+  const file = await db.select('files', '*', { filter: { id }, single: true });
+  if (!file) return json({ success: false, error: 'Archivo no encontrado' }, 404);
 
   const config = await getConfig(env);
 
-  // Delete from Google Drive
   try {
-    if (config?.drive_credentials && fileData.drive_id) {
-      await deleteDriveFile(config.drive_credentials, fileData.drive_id);
+    if (config?.drive_credentials && file.drive_id) {
+      await deleteDriveFile(config.drive_credentials, file.drive_id);
     }
   } catch (e) {
     console.error('Drive delete warning:', e.message);
   }
 
-  // Remove from KV
-  await env.MEDIA_KV.delete(`file:${id}`);
-
-  // Remove from file list
-  const filesList = await env.MEDIA_KV.get('app:files', 'json') || [];
-  const updatedList = filesList.filter(fid => fid !== id);
-  await env.MEDIA_KV.put('app:files', JSON.stringify(updatedList));
-
+  await db.remove('files', { id });
   return json({ success: true, message: 'Archivo eliminado' });
 }
 
-// DELETE /api/files — Delete all files
+// DELETE /api/files — Delete all
 async function handleDeleteAllFiles(request, env) {
   const isAdmin = await verifyAdmin(request, env);
-  if (!isAdmin) {
-    return json({ success: false, error: 'Unauthorized' }, 401);
-  }
+  if (!isAdmin) return json({ success: false, error: 'Unauthorized' }, 401);
 
+  const db = getDb(env);
   const config = await getConfig(env);
-  const filesList = await env.MEDIA_KV.get('app:files', 'json') || [];
+  const files = await db.select('files', 'id, drive_id');
 
-  let deleted = 0;
-  let errors = 0;
-
-  for (const id of filesList) {
-    const fileData = await env.MEDIA_KV.get(`file:${id}`, 'json');
-    if (fileData && config?.drive_credentials && fileData.drive_id) {
-      try {
-        await deleteDriveFile(config.drive_credentials, fileData.drive_id);
+  let deleted = 0, errors = 0;
+  for (const file of files) {
+    try {
+      if (config?.drive_credentials && file.drive_id) {
+        await deleteDriveFile(config.drive_credentials, file.drive_id);
         deleted++;
-      } catch (e) {
-        errors++;
-        console.error(`Failed to delete ${id} from Drive:`, e.message);
       }
+    } catch (e) {
+      errors++;
+      console.error(`Failed to delete ${file.id}:`, e.message);
     }
-    await env.MEDIA_KV.delete(`file:${id}`);
   }
 
-  // Reset file list
-  await env.MEDIA_KV.put('app:files', JSON.stringify([]));
+  await db.remove('files', {});
 
-  return json({
-    success: true,
-    message: `${deleted} archivos eliminados de Drive${errors > 0 ? `, ${errors} errores` : ''}`
-  });
+  return json({ success: true, message: `${deleted} archivos eliminados de Drive${errors > 0 ? `, ${errors} errores` : ''}` });
 }
 
 // ============================================
