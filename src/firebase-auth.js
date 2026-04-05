@@ -241,6 +241,19 @@ export function extractFirebaseToken(request) {
     return queryToken;
   }
 
+  // Check cookie (__session set by login page after Firebase auth)
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const cookies = cookieHeader.split(';').map(c => c.trim());
+  for (const cookie of cookies) {
+    const eqIndex = cookie.indexOf('=');
+    if (eqIndex === -1) continue;
+    const name = cookie.substring(0, eqIndex).trim();
+    if (name === '__session') {
+      const token = cookie.substring(eqIndex + 1).trim();
+      if (token.startsWith('eyJ')) return token;
+    }
+  }
+
   return null;
 }
 

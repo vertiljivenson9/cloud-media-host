@@ -1033,6 +1033,14 @@ async function handleVerifyTables(request, env) {
 
 // POST /api/upload — Step-by-step upload with detailed error reporting
 async function handleUpload(request, env, url) {
+  // Verify Firebase auth if configured
+  if (env.FIREBASE_PROJECT_ID) {
+    const { user, firebaseConfigured } = await authenticateRequest(request, env);
+    if (firebaseConfigured && !user) {
+      return json({ success: false, error: 'Autenticacion requerida', step: 1, detail: 'Inicia sesion para subir archivos.' }, 401);
+    }
+  }
+
   // Step 1: Read config from Supabase
   let config;
   try {

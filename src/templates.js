@@ -508,7 +508,8 @@ ${BASE_CSS}
     });
     
     signoutBtn.addEventListener('click', function() {
-      auth.signOut();
+      document.cookie = '__session=; path=/; max-age=0';
+      auth.signOut().then(function() { location.href = '/'; });
     });
     
     // Expose auth for use by other page scripts
@@ -1246,11 +1247,19 @@ ${BASE_CSS}
   var auth = firebase.auth();
   auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
 
+  // Helper: set session cookie and redirect
+  function setSessionAndRedirect(user) {
+    user.getIdToken().then(function(token) {
+      document.cookie = '__session=' + token + '; path=/; max-age=3600; SameSite=Strict';
+      window.location.href = '/';
+    });
+  }
+
   // Check if already logged in
   auth.onAuthStateChanged(function(user) {
     if (user) {
-      // Already authenticated, redirect to dashboard
-      window.location.href = '/';
+      // Already authenticated, set cookie and redirect to dashboard
+      setSessionAndRedirect(user);
     }
   });
 
@@ -1348,7 +1357,8 @@ ${BASE_CSS}
     }
 
     promise.then(function(result) {
-      // onAuthStateChanged will handle the redirect
+      // Set cookie and redirect (onAuthStateChanged will also fire but this ensures cookie is set)
+      if (result.user) setSessionAndRedirect(result.user);
     }).catch(function(e) {
       setLoading(emailSubmitBtn, emailSubmitText, false);
       var code = e.code || '';
@@ -1413,7 +1423,8 @@ ${BASE_CSS}
         window.__googleUserEmail = result.additionalUserInfo.profile.email;
         window.__googleUserName = result.additionalUserInfo.profile.name;
       }
-      // onAuthStateChanged will handle the redirect
+      // Set cookie and redirect
+      if (result.user) setSessionAndRedirect(result.user);
     }).catch(function(e) {
       setLoading(googleSignInBtn, googleSignInBtn, false);
       if (e.code === 'auth/popup-closed-by-user') return;
@@ -1736,7 +1747,8 @@ ${BASE_CSS}
     });
     
     signoutBtn.addEventListener('click', function() {
-      auth.signOut();
+      document.cookie = '__session=; path=/; max-age=0';
+      auth.signOut().then(function() { location.href = '/'; });
     });
     
     // Expose auth for use by other page scripts
@@ -1847,7 +1859,7 @@ ${BASE_CSS}
       <button class="modal-close" onclick="closeModal('adminModal')">${IC.x}</button>
     </div>
     <div class="modal-body">
-      ${config.admin_password ? `
+      ${config.admin_password_hash ? `
       <div style="margin-bottom:16px">
         <label class="field-label">Contrasena de admin</label>
         <input type="password" id="adminPass" placeholder="Ingresa tu contrasena" style="margin-top:6px">
@@ -1871,7 +1883,7 @@ ${BASE_CSS}
         <strong style="color:var(--text-secondary)">Info del sistema</strong><br>
         Drive Folder: <code style="color:var(--accent);font-size:11px">${config.drive_folder_id||'?'}</code><br>
         Cloudinary: ${hasCloudinary?'<span style="color:var(--success)">Configurado</span>':'<span style="color:var(--text-muted)">No configurado</span>'}<br>
-        Admin: ${config.admin_password?'<span style="color:var(--success)">Protegido</span>':'<span style="color:var(--text-muted)">Sin proteccion</span>'}
+        Admin: ${config.admin_password_hash?'<span style="color:var(--success)">Protegido</span>':'<span style="color:var(--text-muted)">Sin proteccion</span>'}
       </div>
     </div>
   </div>
@@ -2062,6 +2074,7 @@ function uploadFiles(files) {
 
     const xhr = new XMLHttpRequest();
     xhr.open('POST', uploadUrl, true);
+    xhr.withCredentials = true;
 
     // Send Google OAuth access token if available (from Firebase Auth + Google Sign-In)
     if (window.__googleAccessToken) {
