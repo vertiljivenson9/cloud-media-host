@@ -262,7 +262,7 @@ export function setupPage(existingConfig) {
     <div class="folder-entry ${fid ? 'has-id' : ''}" data-index="${i}" ${fid ? 'data-folder-id="'+fid+'"' : ''}>
       <div class="folder-entry-top">
         <input type="text" class="folder-name" placeholder="Nombre (ej: Mi app de musica)" value="${f.name || ''}">
-        <button class="btn-remove" onclick="removeFolderEntry(this)" title="Quitar">${IC.x}</button>
+        <button class="btn-remove" data-remove="1" type="button" title="Quitar">${IC.x}</button>
       </div>
       <div class="folder-entry-bottom">
         <input type="text" class="folder-url" placeholder="https://drive.google.com/drive/folders/... o solo el ID" value="${driveFid}">
@@ -303,7 +303,7 @@ export function setupPage(existingConfig) {
     <div class="folder-entry" data-index="0">
       <div class="folder-entry-top">
         <input type="text" class="folder-name" placeholder="Nombre (ej: Mi app de musica)" value="">
-        <button class="btn-remove" onclick="removeFolderEntry(this)" title="Quitar">${IC.x}</button>
+        <button class="btn-remove" data-remove="1" type="button" title="Quitar">${IC.x}</button>
       </div>
       <div class="folder-entry-bottom">
         <input type="text" class="folder-url" placeholder="https://drive.google.com/drive/folders/... o solo el ID" value="">
@@ -503,9 +503,11 @@ ${BASE_CSS}
       ${folderEntriesHtml}
     </div>
 
-    <button class="add-folder-btn" onclick="addFolderEntry()">
-      ${IC.folderPlus} Agregar carpeta de Google Drive
-    </button>
+    <div id="addFolderArea" style="margin-top:8px">
+      <button class="add-folder-btn" id="addFolderBtn" type="button">
+        + Agregar otra carpeta
+      </button>
+    </div>
   </div>
 
   <div class="card setup-card">
@@ -556,8 +558,8 @@ ${BASE_CSS}
     </a>
   </div>
 
-  <button class="btn btn-primary btn-block" id="saveBtn" style="margin-top:20px;padding:12px 16px;font-size:15px" onclick="saveConfig()">
-    ${IC.check} ${isConfigured ? 'Guardar cambios' : 'Guardar y empezar'}
+  <button class="btn btn-primary btn-block" id="saveBtn" type="button" style="margin-top:20px;padding:12px 16px;font-size:15px">
+    &#10003; ${isConfigured ? 'Guardar cambios' : 'Guardar y empezar'}
   </button>
 
   <div class="save-status" id="saveStatus"></div>
@@ -568,137 +570,178 @@ ${BASE_CSS}
 </div>
 
 <script>
-document.getElementById('enableCld').addEventListener('change', e => {
-  document.getElementById('cldFields').classList.toggle('visible', e.target.checked);
-});
+(function() {
+  document.getElementById('enableCld').addEventListener('change', function(e) {
+    document.getElementById('cldFields').classList.toggle('visible', e.target.checked);
+  });
 
-function extractFolderId(input) {
-  const s = (input || '').trim();
-  if (!s) return '';
-  const m = s.match(/folders\\/([a-zA-Z0-9_-]{10,})/);
-  if (m) return m[1];
-  if (/^[a-zA-Z0-9_-]{10,}$/.test(s)) return s;
-  return s;
-}
-
-function removeFolderEntry(btn) {
-  btn.closest('.folder-entry').remove();
-}
-
-function addFolderEntry(name, folderId) {
-  var list = document.getElementById('folderList');
-  if (!list) return;
-  var idx = list.children.length;
-  var div = document.createElement('div');
-  div.className = 'folder-entry';
-  div.dataset.index = idx;
-
-  var top = document.createElement('div');
-  top.className = 'folder-entry-top';
-  var nameInput = document.createElement('input');
-  nameInput.type = 'text';
-  nameInput.className = 'folder-name';
-  nameInput.placeholder = 'Nombre (ej: Mi app de musica)';
-  nameInput.value = name || '';
-  var removeBtn = document.createElement('button');
-  removeBtn.className = 'btn-remove';
-  removeBtn.title = 'Quitar';
-  removeBtn.innerHTML = document.querySelector('.folder-entry .btn-remove') ? document.querySelector('.folder-entry .btn-remove').innerHTML : '&#10005;';
-  removeBtn.onclick = function() { removeFolderEntry(this); };
-  top.appendChild(nameInput);
-  top.appendChild(removeBtn);
-
-  var bottom = document.createElement('div');
-  bottom.className = 'folder-entry-bottom';
-  var urlInput = document.createElement('input');
-  urlInput.type = 'text';
-  urlInput.className = 'folder-url';
-  urlInput.placeholder = 'https://drive.google.com/drive/folders/... o solo el ID';
-  urlInput.value = folderId || '';
-  bottom.appendChild(urlInput);
-
-  div.appendChild(top);
-  div.appendChild(bottom);
-  list.appendChild(div);
-  nameInput.focus();
-}
-
-function copyApiUrl(text) {
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(text).then(function() {
-      var toast = document.createElement('div');
-      toast.className = 'toast success';
-      toast.innerHTML = '<span class="toast-icon">&#10003;</span> Copiado';
-      document.body.appendChild(toast);
-      setTimeout(function() { toast.remove(); }, 1500);
+  // Attach add-folder button event
+  var addBtn = document.getElementById('addFolderBtn');
+  if (addBtn) {
+    addBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      addFolderEntry();
     });
   }
-}
 
-async function saveConfig() {
-  const btn = document.getElementById('saveBtn');
-  const status = document.getElementById('saveStatus');
-  btn.disabled = true;
-  status.className = 'save-status';
-  status.innerHTML = '';
-
-  const driveJson = document.getElementById('driveJson').value.trim();
-  const adminPwd = document.getElementById('adminPwd').value.trim();
-  const enableCloud = document.getElementById('enableCld').checked;
-  const isConfigured = ${isConfigured};
-
-  // If already configured and no new JSON provided, keep existing creds
-  if (!driveJson && !isConfigured) { showErr('El Service Account JSON es obligatorio'); return; }
-
-  let creds = null;
-  if (driveJson) {
-    try {
-      creds = JSON.parse(driveJson);
-      if (!creds.client_email || !creds.private_key) throw new Error('Campos faltantes');
-    } catch (e) { showErr('JSON invalido: ' + e.message); return; }
+  // Attach save button event
+  var saveBtn = document.getElementById('saveBtn');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      saveConfig();
+    });
   }
 
-  // Collect all folders
-  const folderEntries = document.querySelectorAll('.folder-entry');
-  const folders = [];
-  let folderError = '';
-  folderEntries.forEach(entry => {
-    const name = entry.querySelector('.folder-name').value.trim();
-    const rawId = entry.querySelector('.folder-url').value.trim();
-    const folderId = extractFolderId(rawId);
-    // Preserve existing folder workspace ID if it has one
-    const existingId = entry.dataset.folderId || '';
-    if (!name && !rawId) return;
-    if (!name) { folderError = 'Cada carpeta necesita un nombre'; return; }
-    if (!folderId || !/^[a-zA-Z0-9_-]{10,}$/.test(folderId)) { folderError = 'ID de carpeta invalido para "' + name + '"'; return; }
-    const folderObj = { name, drive_folder_id: folderId };
-    if (existingId) folderObj.id = existingId;
-    folders.push(folderObj);
+  // Event delegation for remove buttons (server-rendered entries)
+  document.addEventListener('click', function(e) {
+    var removeBtn = e.target.closest('[data-remove]');
+    if (removeBtn) {
+      removeBtn.closest('.folder-entry').remove();
+    }
   });
-  if (folderError) { showErr(folderError); return; }
-  if (folders.length === 0) { showErr('Agrega al menos una carpeta de Google Drive'); return; }
 
-  const config = {};
-  if (creds) config.drive_credentials = creds;
-  config.folders = folders;
-  if (adminPwd) config.admin_password = adminPwd;
-  if (enableCloud) {
-    config.cloudinary_cloud_name = document.getElementById('cloudName').value.trim();
-    config.cloudinary_upload_preset = document.getElementById('uploadPreset').value.trim();
-    if (!config.cloudinary_cloud_name || !config.cloudinary_upload_preset) { showErr('Cloud Name y Upload Preset son obligatorios'); return; }
-  }
+  window.removeFolderEntry = function(btn) {
+    btn.closest('.folder-entry').remove();
+  };
 
-  try {
-    const res = await fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(config) });
-    const data = await res.json();
-    if (data.success) { showOk('Configuracion guardada. Redirigiendo...'); setTimeout(() => location.href = '/', 1200); }
-    else showErr(data.error || 'Error desconocido');
-  } catch (e) { showErr('Error de conexion: ' + e.message); }
-  btn.disabled = false;
+  window.addFolderEntry = function(name, folderId) {
+    var list = document.getElementById('folderList');
+    if (!list) return;
+    var idx = list.children.length;
 
-  function showErr(msg) { status.className='save-status visible err'; status.innerHTML='<span style="color:var(--danger)">&#9888;</span> '+msg; btn.disabled=false; }
-  function showOk(msg) { status.className='save-status visible ok'; status.innerHTML='<span style="color:var(--success)">&#10003;</span> '+msg; }
-}
+    var div = document.createElement('div');
+    div.className = 'folder-entry';
+    div.dataset.index = idx;
+
+    var top = document.createElement('div');
+    top.className = 'folder-entry-top';
+
+    var nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'folder-name';
+    nameInput.placeholder = 'Nombre (ej: Mi app de musica)';
+    nameInput.value = name || '';
+
+    var removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'btn-remove';
+    removeBtn.title = 'Quitar';
+    removeBtn.textContent = '\\u2715';
+    removeBtn.addEventListener('click', function() {
+      div.remove();
+    });
+
+    top.appendChild(nameInput);
+    top.appendChild(removeBtn);
+
+    var bottom = document.createElement('div');
+    bottom.className = 'folder-entry-bottom';
+
+    var urlInput = document.createElement('input');
+    urlInput.type = 'text';
+    urlInput.className = 'folder-url';
+    urlInput.placeholder = 'https://drive.google.com/drive/folders/... o solo el ID';
+    urlInput.value = folderId || '';
+
+    bottom.appendChild(urlInput);
+
+    div.appendChild(top);
+    div.appendChild(bottom);
+    list.appendChild(div);
+
+    // Move the add button below the new entry
+    var addArea = document.getElementById('addFolderArea');
+    if (addArea) {
+      list.parentNode.appendChild(addArea);
+    }
+
+    nameInput.focus();
+  };
+
+  window.extractFolderId = function(input) {
+    var s = (input || '').trim();
+    if (!s) return '';
+    var m = s.match(/folders\\/([a-zA-Z0-9_-]{10,})/);
+    if (m) return m[1];
+    if (/^[a-zA-Z0-9_-]{10,}$/.test(s)) return s;
+    return s;
+  };
+
+  window.copyApiUrl = function(text) {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(function() {
+        var toast = document.createElement('div');
+        toast.className = 'toast success';
+        toast.textContent = '\\u2713 Copiado';
+        document.body.appendChild(toast);
+        setTimeout(function() { toast.remove(); }, 1500);
+      });
+    }
+  };
+
+  window.saveConfig = async function() {
+    var btn = document.getElementById('saveBtn');
+    var status = document.getElementById('saveStatus');
+    btn.disabled = true;
+    status.className = 'save-status';
+    status.innerHTML = '';
+
+    var driveJson = document.getElementById('driveJson').value.trim();
+    var adminPwd = document.getElementById('adminPwd').value.trim();
+    var enableCloud = document.getElementById('enableCld').checked;
+    var isConfigured = ${isConfigured};
+
+    if (!driveJson && !isConfigured) { showErr('El Service Account JSON es obligatorio'); return; }
+
+    var creds = null;
+    if (driveJson) {
+      try {
+        creds = JSON.parse(driveJson);
+        if (!creds.client_email || !creds.private_key) throw new Error('Campos faltantes');
+      } catch (e) { showErr('JSON invalido: ' + e.message); return; }
+    }
+
+    var folderEntries = document.querySelectorAll('.folder-entry');
+    var folders = [];
+    var folderError = '';
+    folderEntries.forEach(function(entry) {
+      var name = entry.querySelector('.folder-name').value.trim();
+      var rawId = entry.querySelector('.folder-url').value.trim();
+      var folderId = extractFolderId(rawId);
+      var existingId = entry.dataset.folderId || '';
+      if (!name && !rawId) return;
+      if (!name) { folderError = 'Cada carpeta necesita un nombre'; return; }
+      if (!folderId || !/^[a-zA-Z0-9_-]{10,}$/.test(folderId)) { folderError = 'ID de carpeta invalido para "' + name + '"'; return; }
+      var folderObj = { name: name, drive_folder_id: folderId };
+      if (existingId) folderObj.id = existingId;
+      folders.push(folderObj);
+    });
+    if (folderError) { showErr(folderError); return; }
+    if (folders.length === 0) { showErr('Agrega al menos una carpeta de Google Drive'); return; }
+
+    var config = {};
+    if (creds) config.drive_credentials = creds;
+    config.folders = folders;
+    if (adminPwd) config.admin_password = adminPwd;
+    if (enableCloud) {
+      config.cloudinary_cloud_name = document.getElementById('cloudName').value.trim();
+      config.cloudinary_upload_preset = document.getElementById('uploadPreset').value.trim();
+      if (!config.cloudinary_cloud_name || !config.cloudinary_upload_preset) { showErr('Cloud Name y Upload Preset son obligatorios'); return; }
+    }
+
+    try {
+      var res = await fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(config) });
+      var data = await res.json();
+      if (data.success) { showOk('Configuracion guardada. Redirigiendo...'); setTimeout(function() { location.href = '/'; }, 1200); }
+      else showErr(data.error || 'Error desconocido');
+    } catch (e) { showErr('Error de conexion: ' + e.message); }
+    btn.disabled = false;
+
+    function showErr(msg) { status.className='save-status visible err'; status.innerHTML='&#9888; '+msg; btn.disabled=false; }
+    function showOk(msg) { status.className='save-status visible ok'; status.innerHTML='&#10003; '+msg; }
+  };
+})();
 </script>
 </body>
 </html>`;
