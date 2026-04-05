@@ -34,11 +34,12 @@ import { uploadFile, deleteFile as deleteDriveFile, getDownloadUrl, getEmbedUrl,
 import { isCloudinarySupported, uploadFile as uploadToCloudinary, getVideoThumbnail, getVideoStreamUrl } from './cloudinary-client.js';
 import { setupPage, dashboardPage, apiDocsPage } from './templates.js';
 import { createClient } from './supabase.js';
+import { verifyFirebaseToken, extractFirebaseToken, authenticateRequest } from './firebase-auth.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, X-Admin-Key, X-Folder-ID'
+  'Access-Control-Allow-Headers': 'Content-Type, X-Admin-Key, X-Folder-ID, Authorization, X-Firebase-Auth'
 };
 
 export default {
@@ -77,6 +78,12 @@ export default {
           break;
         case '/api/auth/disconnect':
           if (request.method === 'POST') return handleAuthDisconnect(request, env);
+          break;
+        case '/api/auth/me':
+          if (request.method === 'GET') return handleAuthMe(request, env);
+          break;
+        case '/api/auth/firebase-config':
+          if (request.method === 'GET') return handleFirebaseConfig(request, env);
           break;
         case '/api/debug':
           if (request.method === 'GET') return handleDebug(request, env);
@@ -120,7 +127,7 @@ export default {
 // ROUTER
 // ============================================
 function matchRoute(path) {
-  const exact = ['/', '/setup', '/api/docs', '/api/status', '/api/config', '/api/upload', '/api/files', '/api/folders', '/api/test-drive', '/api/auth', '/api/auth/disconnect', '/api/debug', '/api/verify-tables'];
+  const exact = ['/', '/setup', '/api/docs', '/api/status', '/api/config', '/api/upload', '/api/files', '/api/folders', '/api/test-drive', '/api/auth', '/api/auth/me', '/api/auth/firebase-config', '/api/auth/disconnect', '/api/debug', '/api/verify-tables'];
   for (const p of exact) {
     if (path === p) return { pattern: p, params: {} };
   }
@@ -178,6 +185,20 @@ async function getConfig(env) {
 }
 
 async function verifyAdmin(request, env) {
+  // Method 1: Firebase Auth (preferred)
+  if (env.FIREBASE_PROJECT_ID) {
+    const token = extractFirebaseToken(request);
+    if (token) {
+      try {
+        const user = await verifyFirebaseToken(token, env.FIREBASE_PROJECT_ID);
+        if (user) return true;
+      } catch (e) {
+        console.error('Firebase auth verification failed:', e.message);
+      }
+    }
+  }
+
+  // Method 2: Admin password (fallback)
   const config = await getConfig(env);
   if (!config || !config.admin_password_hash) return true;
   const providedKey = request.headers.get('X-Admin-Key');
@@ -190,9 +211,42 @@ async function verifyAdmin(request, env) {
 // HANDLERS
 // ============================================
 
+// GET /api/auth/me — Get current Firebase user info
+async function handleAuthMe(request, env) {
+  if (!env.FIREBASE_PROJECT_ID) {
+    return json({ authenticated: false, firebase_enabled: false });
+  }
+
+  const token = extractFirebaseToken(request);
+  if (!token) {
+    return json({ authenticated: false, firebase_enabled: true });
+  }
+
+  try {
+    const user = await verifyFirebaseToken(token, env.FIREBASE_PROJECT_ID);
+    return json({ authenticated: true, firebase_enabled: true, user });
+  } catch (e) {
+    return json({ authenticated: false, firebase_enabled: true, error: e.message }, 401);
+  }
+}
+
+// GET /api/auth/firebase-config — Return Firebase config for frontend
+async function handleFirebaseConfig(request, env) {
+  const config = {
+    firebase_enabled: !!env.FIREBASE_PROJECT_ID,
+    project_id: env.FIREBASE_PROJECT_ID || null,
+    api_key: env.FIREBASE_API_KEY || null,
+    auth_domain: env.FIREBASE_PROJECT_ID ? `${env.FIREBASE_PROJECT_ID}.firebaseapp.com` : null,
+  };
+  return json(config);
+}
+
 // GET / — Dashboard or Setup
 async function handleIndex(request, env) {
   if (isApiRequest(request)) return handleStatus(request, env);
+
+  // Check Firebase auth status for frontend
+  const { user, firebaseConfigured } = await authenticateRequest(request, env);
 
   let config = null;
   try {
@@ -200,11 +254,11 @@ async function handleIndex(request, env) {
   } catch (e) {
     // Supabase not configured yet — show setup page
     console.error('getConfig error:', e.message);
-    return html(setupPage());
+    return html(setupPage(null, { firebaseConfigured, user }));
   }
 
   if (!config || !config.drive_credentials) {
-    return html(setupPage());
+    return html(setupPage(config, { firebaseConfigured, user }));
   }
 
   const db = getDb(env);
@@ -219,7 +273,7 @@ async function handleIndex(request, env) {
 
   if (folders.length === 0) {
     config.folders = [];
-    return html(setupPage(config));
+    return html(setupPage(config, { firebaseConfigured, user }));
   }
 
   // Attach folders to config for setup page compatibility
@@ -233,12 +287,14 @@ async function handleIndex(request, env) {
 
   files.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-  return html(dashboardPage(config, files, folders));
+  return html(dashboardPage(config, files, folders, { firebaseConfigured, user }));
 }
 
 // GET /setup — Configuration page
 async function handleSetup(request, env) {
   if (isApiRequest(request)) return handleStatus(request, env);
+
+  const { user, firebaseConfigured } = await authenticateRequest(request, env);
 
   let config = null;
   try {
@@ -258,7 +314,7 @@ async function handleSetup(request, env) {
     console.error('handleSetup error:', e.message);
   }
 
-  return html(setupPage(config));
+  return html(setupPage(config, { firebaseConfigured, user }));
 }
 
 // GET /api/docs

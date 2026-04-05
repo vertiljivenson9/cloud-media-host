@@ -249,7 +249,8 @@ const BASE_CSS = `
 // ============================================
 // SETUP PAGE
 // ============================================
-export function setupPage(existingConfig) {
+export function setupPage(existingConfig, authState) {
+  authState = authState || { firebaseConfigured: false, user: null };
   const savedFolders = existingConfig?.folders || [];
   const hasCreds = !!existingConfig?.drive_credentials;
   const isConfigured = hasCreds && savedFolders.length > 0;
@@ -316,6 +317,8 @@ export function setupPage(existingConfig) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${isConfigured ? 'Configuracion' : 'Setup'} - Cloud Media Host</title>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 <style>
 ${BASE_CSS}
   body { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
@@ -450,6 +453,70 @@ ${BASE_CSS}
 </style>
 </head>
 <body>
+<div id="firebase-auth-bar" style="display:none">
+  <div id="firebase-auth-user" style="display:flex;align-items:center;gap:10px;padding:12px 20px;background:var(--bg-surface);border-bottom:1px solid var(--border)">
+    <img id="firebase-user-avatar" src="" alt="" style="width:32px;height:32px;border-radius:50%;object-fit:cover">
+    <div style="flex:1">
+      <div id="firebase-user-name" style="font-size:14px;font-weight:600;color:var(--text-primary)"></div>
+      <div id="firebase-user-email" style="font-size:12px;color:var(--text-muted)"></div>
+    </div>
+    <button id="firebase-signout-btn" class="btn btn-ghost" style="font-size:12px;padding:6px 12px">Cerrar sesion</button>
+  </div>
+</div>
+
+<script>
+(function() {
+  // Check Firebase auth config
+  fetch('/api/auth/firebase-config').then(r => r.json()).then(function(cfg) {
+    if (!cfg.firebase_enabled) return;
+    
+    // Initialize Firebase
+    firebase.initializeApp({
+      apiKey: cfg.api_key,
+      authDomain: cfg.auth_domain,
+      projectId: cfg.project_id
+    });
+    
+    var auth = firebase.auth();
+    auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+    
+    var authBar = document.getElementById('firebase-auth-bar');
+    var authUser = document.getElementById('firebase-auth-user');
+    var signoutBtn = document.getElementById('firebase-signout-btn');
+    
+    function showSignedIn(user) {
+      authBar.style.display = 'block';
+      document.getElementById('firebase-user-avatar').src = user.photoURL || 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect fill="%233F3F46" width="40" height="40"/><text x="50%" y="54%" text-anchor="middle" fill="white" font-size="18" font-family="sans-serif">' + (user.displayName || user.email || '?')[0].toUpperCase() + '</text></svg>');
+      document.getElementById('firebase-user-name').textContent = user.displayName || 'Usuario';
+      document.getElementById('firebase-user-email').textContent = user.email || '';
+      // Store token for API calls
+      user.getIdToken().then(function(token) {
+        window.__firebaseToken = token;
+        // Dispatch event for other scripts to react
+        window.dispatchEvent(new CustomEvent('firebase-auth', { detail: { user: user, token: token } }));
+      });
+    }
+    
+    function showSignedOut() {
+      authBar.style.display = 'none';
+      window.__firebaseToken = null;
+    }
+    
+    auth.onAuthStateChanged(function(user) {
+      if (user) { showSignedIn(user); } 
+      else { showSignedOut(); }
+    });
+    
+    signoutBtn.addEventListener('click', function() {
+      auth.signOut();
+    });
+    
+    // Expose auth for use by other page scripts
+    window.__firebaseAuth = auth;
+  });
+})();
+</script>
+
 <div class="setup-container">
   ${isConfigured ? `
   <button class="back-link" onclick="location.href='/'">
@@ -461,6 +528,42 @@ ${BASE_CSS}
     <h1>Cloud Media Host</h1>
     <p>${isConfigured ? 'Configuracion del workspace' : 'Almacenamiento gratuito sobre Google Drive + Cloudflare'}</p>
   </div>
+
+  ${authState?.firebaseConfigured && !authState?.user ? `
+  <div class="card setup-card" style="border-color:var(--accent);background:linear-gradient(135deg, var(--bg-surface) 0%, rgba(249,115,22,0.05) 100%)">
+    <h2>
+      <span style="color:var(--accent)">${IC.lock}</span>
+      Iniciar sesion con Google
+    </h2>
+    <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;margin-bottom:16px">
+      Inicia sesion con tu cuenta de Google para acceder al panel de administracion.
+      Firebase Auth protege tu aplicacion con autenticacion segura de Google.
+    </p>
+    <button class="btn btn-primary btn-block" id="googleSignInBtn" type="button" style="gap:10px;padding:12px 16px;font-size:15px">
+      <svg width="20" height="20" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#fff"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#fff"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#fff"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#fff"/></svg>
+      Iniciar sesion con Google
+    </button>
+  </div>
+
+  <script>
+  (function() {
+    var btn = document.getElementById('googleSignInBtn');
+    if (!btn) return;
+    btn.addEventListener('click', function() {
+      if (window.__firebaseAuth) {
+        var provider = new firebase.auth.GoogleAuthProvider();
+        window.__firebaseAuth.signInWithPopup(provider).catch(function(e) {
+          if (e.code !== 'auth/popup-closed-by-user') {
+            alert('Error al iniciar sesion: ' + e.message);
+          }
+        });
+      } else {
+        alert('Firebase no esta configurado. Agrega FIREBASE_PROJECT_ID y FIREBASE_API_KEY en wrangler.toml.');
+      }
+    });
+  })();
+  </script>
+  ` : ''}
 
   <div class="card setup-card creds-section ${isConfigured ? 'is-collapsed' : ''}">
     <h2>
@@ -602,6 +705,35 @@ ${BASE_CSS}
       <label class="field-label">Contrasena de administrador</label>
       <input type="password" id="adminPwd" placeholder="${isConfigured ? 'Dejar vacio para mantener la actual' : 'Dejar vacio = acceso abierto a todos'}">
       <div class="field-hint">Solo necesario si quieres restringir eliminacion y cambios de configuracion</div>
+    </div>
+  </div>
+
+  <div class="card setup-card" style="border-color:#FFCA28;background:linear-gradient(135deg, var(--bg-surface) 0%, rgba(255,202,40,0.03) 100%)">
+    <h2>
+      <span style="color:#FFCA28">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      </span>
+      Firebase Authentication
+      <span class="badge ${authState?.firebaseConfigured ? 'badge-success' : 'badge-muted'}">${authState?.firebaseConfigured ? 'Activo' : 'Opcional'}</span>
+    </h2>
+    <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;margin-bottom:12px">
+      Agrega Firebase Auth para que los usuarios inicien sesion con Google. 
+      Esto reemplaza la contrasena de administrador con autenticacion segura.
+      Sin Firebase, el acceso es abierto (o protegido por contrasena de admin).
+    </p>
+    <div class="field-hint" style="margin-bottom:12px;color:#FFCA28;font-size:12px">
+      Configura FIREBASE_PROJECT_ID y FIREBASE_API_KEY en <strong>wrangler.toml</strong> o como secrets en Cloudflare Dashboard.
+    </div>
+    <div class="steps-box">
+      <strong>Para configurar Firebase Auth:</strong><br>
+      1. Ir a <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a><br>
+      2. Crear proyecto (o usar existente)<br>
+      3. Ir a <strong>Authentication → Sign-in method</strong><br>
+      4. Habilitar <strong>Google</strong> como proveedor<br>
+      5. Copiar <strong>Project ID</strong> y <strong>API Key</strong> de Project Settings<br>
+      6. Agregar como variables de entorno en tu Worker:<br>
+      &nbsp;&nbsp;<code style="background:var(--bg-root);padding:2px 6px;border-radius:3px;font-size:11px">FIREBASE_PROJECT_ID = "tu-proyecto-id"</code><br>
+      &nbsp;&nbsp;<code style="background:var(--bg-root);padding:2px 6px;border-radius:3px;font-size:11px">FIREBASE_API_KEY = "AIzaSy..."</code>
     </div>
   </div>
 
@@ -951,7 +1083,8 @@ ${BASE_CSS}
 // ============================================
 // DASHBOARD
 // ============================================
-export function dashboardPage(config, files = [], folders = []) {
+export function dashboardPage(config, files = [], folders = [], authState) {
+  authState = authState || { firebaseConfigured: false, user: null };
   const hasCloudinary = !!config.cloudinary_cloud_name;
 
   // Build folder list items JSON for JS
@@ -989,6 +1122,8 @@ export function dashboardPage(config, files = [], folders = []) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Cloud Media Host</title>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 <style>
 ${BASE_CSS}
   .app-header {
@@ -1186,6 +1321,70 @@ ${BASE_CSS}
 </head>
 <body>
 
+<div id="firebase-auth-bar" style="display:none">
+  <div id="firebase-auth-user" style="display:flex;align-items:center;gap:10px;padding:12px 20px;background:var(--bg-surface);border-bottom:1px solid var(--border)">
+    <img id="firebase-user-avatar" src="" alt="" style="width:32px;height:32px;border-radius:50%;object-fit:cover">
+    <div style="flex:1">
+      <div id="firebase-user-name" style="font-size:14px;font-weight:600;color:var(--text-primary)"></div>
+      <div id="firebase-user-email" style="font-size:12px;color:var(--text-muted)"></div>
+    </div>
+    <button id="firebase-signout-btn" class="btn btn-ghost" style="font-size:12px;padding:6px 12px">Cerrar sesion</button>
+  </div>
+</div>
+
+<script>
+(function() {
+  // Check Firebase auth config
+  fetch('/api/auth/firebase-config').then(r => r.json()).then(function(cfg) {
+    if (!cfg.firebase_enabled) return;
+    
+    // Initialize Firebase
+    firebase.initializeApp({
+      apiKey: cfg.api_key,
+      authDomain: cfg.auth_domain,
+      projectId: cfg.project_id
+    });
+    
+    var auth = firebase.auth();
+    auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+    
+    var authBar = document.getElementById('firebase-auth-bar');
+    var authUser = document.getElementById('firebase-auth-user');
+    var signoutBtn = document.getElementById('firebase-signout-btn');
+    
+    function showSignedIn(user) {
+      authBar.style.display = 'block';
+      document.getElementById('firebase-user-avatar').src = user.photoURL || 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect fill="%233F3F46" width="40" height="40"/><text x="50%" y="54%" text-anchor="middle" fill="white" font-size="18" font-family="sans-serif">' + (user.displayName || user.email || '?')[0].toUpperCase() + '</text></svg>');
+      document.getElementById('firebase-user-name').textContent = user.displayName || 'Usuario';
+      document.getElementById('firebase-user-email').textContent = user.email || '';
+      // Store token for API calls
+      user.getIdToken().then(function(token) {
+        window.__firebaseToken = token;
+        // Dispatch event for other scripts to react
+        window.dispatchEvent(new CustomEvent('firebase-auth', { detail: { user: user, token: token } }));
+      });
+    }
+    
+    function showSignedOut() {
+      authBar.style.display = 'none';
+      window.__firebaseToken = null;
+    }
+    
+    auth.onAuthStateChanged(function(user) {
+      if (user) { showSignedIn(user); } 
+      else { showSignedOut(); }
+    });
+    
+    signoutBtn.addEventListener('click', function() {
+      auth.signOut();
+    });
+    
+    // Expose auth for use by other page scripts
+    window.__firebaseAuth = auth;
+  });
+})();
+</script>
+
 <div class="app-header">
   <div class="app-logo">
     ${IC.cloud}
@@ -1200,6 +1399,42 @@ ${BASE_CSS}
     <a href="/api/docs" target="_blank" class="btn-icon-only" title="API Docs">${IC.book}</a>
   </div>
 </div>
+
+${authState?.firebaseConfigured && !authState?.user ? `
+<div style="max-width:920px;margin:20px auto 0;padding:0 24px">
+  <div class="card" style="border-color:var(--accent);background:linear-gradient(135deg, var(--bg-surface) 0%, rgba(249,115,22,0.05) 100%);text-align:center;padding:32px">
+    <div style="margin-bottom:16px;color:var(--accent)">${IC.lock}</div>
+    <h2 style="font-size:18px;font-weight:600;margin-bottom:8px">Iniciar sesion con Google</h2>
+    <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;margin-bottom:20px">
+      Inicia sesion con tu cuenta de Google para acceder al panel de administracion.
+      Firebase Auth protege tu aplicacion con autenticacion segura de Google.
+    </p>
+    <button class="btn btn-primary" id="googleSignInBtn" type="button" style="gap:10px;padding:12px 24px;font-size:15px;margin:0 auto">
+      <svg width="20" height="20" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#fff"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#fff"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#fff"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#fff"/></svg>
+      Iniciar sesion con Google
+    </button>
+  </div>
+</div>
+
+<script>
+(function() {
+  var btn = document.getElementById('googleSignInBtn');
+  if (!btn) return;
+  btn.addEventListener('click', function() {
+    if (window.__firebaseAuth) {
+      var provider = new firebase.auth.GoogleAuthProvider();
+      window.__firebaseAuth.signInWithPopup(provider).catch(function(e) {
+        if (e.code !== 'auth/popup-closed-by-user') {
+          alert('Error al iniciar sesion: ' + e.message);
+        }
+      });
+    } else {
+      alert('Firebase no esta configurado. Agrega FIREBASE_PROJECT_ID y FIREBASE_API_KEY en wrangler.toml.');
+    }
+  });
+})();
+</script>
+` : ''}
 
 <main class="app-main">
   <div class="upload-zone" id="dropZone">
