@@ -255,7 +255,7 @@ export function setupPage(existingConfig) {
   const isConfigured = hasCreds && savedFolders.length > 0;
 
   // Build folder entries HTML with API info for already-saved folders
-  const folderEntriesHtml = savedFolders.map((f, i) => {
+  const savedEntriesHtml = savedFolders.map((f, i) => {
     const fid = f.id || '';
     const driveFid = f.drive_folder_id || '';
     return `
@@ -297,6 +297,18 @@ export function setupPage(existingConfig) {
       </div>` : ''}
     </div>`;
   }).join('');
+
+  // Always show at least one empty entry if no saved folders exist
+  const folderEntriesHtml = savedEntriesHtml || `
+    <div class="folder-entry" data-index="0">
+      <div class="folder-entry-top">
+        <input type="text" class="folder-name" placeholder="Nombre (ej: Mi app de musica)" value="">
+        <button class="btn-remove" onclick="removeFolderEntry(this)" title="Quitar">${IC.x}</button>
+      </div>
+      <div class="folder-entry-bottom">
+        <input type="text" class="folder-url" placeholder="https://drive.google.com/drive/folders/... o solo el ID" value="">
+      </div>
+    </div>`;
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -574,30 +586,53 @@ function removeFolderEntry(btn) {
 }
 
 function addFolderEntry(name, folderId) {
-  const list = document.getElementById('folderList');
-  const idx = list.children.length;
-  const div = document.createElement('div');
+  var list = document.getElementById('folderList');
+  if (!list) return;
+  var idx = list.children.length;
+  var div = document.createElement('div');
   div.className = 'folder-entry';
   div.dataset.index = idx;
-  div.innerHTML =
-    '<div class="folder-entry-top">' +
-      '<input type="text" class="folder-name" placeholder="Nombre (ej: Mi app de musica)" value="' + (name||'') + '">' +
-      '<button class="btn-remove" onclick="removeFolderEntry(this)" title="Quitar">${IC.x}</button>' +
-    '</div>' +
-    '<div class="folder-entry-bottom">' +
-      '<input type="text" class="folder-url" placeholder="https://drive.google.com/drive/folders/... o solo el ID" value="' + (folderId||'') + '">' +
-    '</div>';
+
+  var top = document.createElement('div');
+  top.className = 'folder-entry-top';
+  var nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.className = 'folder-name';
+  nameInput.placeholder = 'Nombre (ej: Mi app de musica)';
+  nameInput.value = name || '';
+  var removeBtn = document.createElement('button');
+  removeBtn.className = 'btn-remove';
+  removeBtn.title = 'Quitar';
+  removeBtn.innerHTML = document.querySelector('.folder-entry .btn-remove') ? document.querySelector('.folder-entry .btn-remove').innerHTML : '&#10005;';
+  removeBtn.onclick = function() { removeFolderEntry(this); };
+  top.appendChild(nameInput);
+  top.appendChild(removeBtn);
+
+  var bottom = document.createElement('div');
+  bottom.className = 'folder-entry-bottom';
+  var urlInput = document.createElement('input');
+  urlInput.type = 'text';
+  urlInput.className = 'folder-url';
+  urlInput.placeholder = 'https://drive.google.com/drive/folders/... o solo el ID';
+  urlInput.value = folderId || '';
+  bottom.appendChild(urlInput);
+
+  div.appendChild(top);
+  div.appendChild(bottom);
   list.appendChild(div);
+  nameInput.focus();
 }
 
 function copyApiUrl(text) {
-  navigator.clipboard.writeText(text).then(() => {
-    const toast = document.createElement('div');
-    toast.className = 'toast success';
-    toast.innerHTML = '<span class="toast-icon">${IC.check}</span> Copiado';
-    document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 1500);
-  });
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(function() {
+      var toast = document.createElement('div');
+      toast.className = 'toast success';
+      toast.innerHTML = '<span class="toast-icon">&#10003;</span> Copiado';
+      document.body.appendChild(toast);
+      setTimeout(function() { toast.remove(); }, 1500);
+    });
+  }
 }
 
 async function saveConfig() {
@@ -661,8 +696,8 @@ async function saveConfig() {
   } catch (e) { showErr('Error de conexion: ' + e.message); }
   btn.disabled = false;
 
-  function showErr(msg) { status.className='save-status visible err'; status.innerHTML='${IC.alert} '+msg; btn.disabled=false; }
-  function showOk(msg) { status.className='save-status visible ok'; status.innerHTML='${IC.check} '+msg; }
+  function showErr(msg) { status.className='save-status visible err'; status.innerHTML='<span style="color:var(--danger)">&#9888;</span> '+msg; btn.disabled=false; }
+  function showOk(msg) { status.className='save-status visible ok'; status.innerHTML='<span style="color:var(--success)">&#10003;</span> '+msg; }
 }
 </script>
 </body>
