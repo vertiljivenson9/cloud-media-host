@@ -1251,23 +1251,14 @@ ${BASE_CSS}
   var _redirecting = false;
 
   // Helper: set session cookie and redirect
-  // Verifies with server BEFORE redirecting to prevent infinite loops
   function setSessionAndRedirect(user) {
     if (_redirecting) return;
     _redirecting = true;
     user.getIdToken(true).then(function(token) {
       document.cookie = '__session=' + token + '; path=/; max-age=3600; SameSite=Lax';
-      // Verify token with server before redirecting to break potential loops
-      return fetch('/api/auth/me', {
-        headers: { 'Authorization': 'Bearer ' + token }
-      }).then(function(r) { return r.json(); }).then(function(data) {
-        if (data.authenticated) {
-          window.location.replace('/');
-        } else {
-          // Server rejected the token — don't redirect to prevent loop
-          _redirecting = false;
-        }
-      });
+      // Redirect immediately — trust client-side Firebase auth
+      // Server will verify cookie on the next request
+      window.location.replace('/');
     }).catch(function(err) {
       _redirecting = false;
       console.error('Auth redirect error:', err);

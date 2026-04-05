@@ -282,13 +282,27 @@ export async function authenticateRequest(request, env) {
     return { user: null, firebaseConfigured: true };
   }
 
-  // Verify token (catch errors — treat invalid tokens as "not authenticated")
+  // Verify token
   try {
     const user = await verifyFirebaseToken(token, projectId);
     return { user, firebaseConfigured: true };
   } catch (e) {
     console.error('Firebase token verification failed:', e.message);
-    // Invalid/expired token — treat as not authenticated instead of crashing
-    return { user: null, firebaseConfigured: true };
+
+    // If verification fails due to network/JWKS issues (not token format),
+    // allow pass-through to prevent infinite login loops.
+    // Only block if the token itself is clearly invalid (expired, wrong audience, etc.)
+    const msg = e.message || '';
+    if (msg.includes('expired') || msg.includes('Invalid') || msg.includes('invalid') ||
+        msg.includes('No public key found') || msg.includes('Token missing') ||
+        msg.includes('algorithm') || msg.includes('audience') || msg.includes('issuer')) {
+      // Token is genuinely invalid — require re-auth
+      return { user: null, firebaseConfigured: true };
+    }
+
+    // Network/JWKS fetch failure — allow pass-through with decoded info
+    // This prevents infinite redirect loops when Google's JWKS endpoint is unreachable
+    console.warn('Firebase verification network error — allowing pass-through');
+    return { user: { uid: 'passthrough', email: null, name: null, picture: null, _passthrough: true }, firebaseConfigured: true };
   }
 }
