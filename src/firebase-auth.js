@@ -282,7 +282,13 @@ export async function authenticateRequest(request, env) {
     return { user: null, firebaseConfigured: true };
   }
 
-  // Verify token
-  const user = await verifyFirebaseToken(token, projectId);
-  return { user, firebaseConfigured: true };
+  // Verify token (catch errors — treat invalid tokens as "not authenticated")
+  try {
+    const user = await verifyFirebaseToken(token, projectId);
+    return { user, firebaseConfigured: true };
+  } catch (e) {
+    console.error('Firebase token verification failed:', e.message);
+    // Invalid/expired token — treat as not authenticated instead of crashing
+    return { user: null, firebaseConfigured: true };
+  }
 }
