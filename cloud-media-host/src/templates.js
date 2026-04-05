@@ -559,6 +559,14 @@ ${BASE_CSS}
   /* Player modal */
   .media-player video, .media-player audio { width: 100%; border-radius: var(--radius-md); margin-top: 12px; outline: none; }
   .media-title { font-size: 14px; font-weight: 500; }
+
+  .docs-promo {
+    display: flex; align-items: center; gap: 20px;
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); padding: 24px;
+  }
+  .docs-promo-text { flex: 1; }
+  @media (max-width: 640px) { .docs-promo { flex-direction: column; text-align: center; } .docs-promo .btn { width: 100%; } }
 </style>
 </head>
 <body>
@@ -602,6 +610,16 @@ ${BASE_CSS}
     <input type="text" class="search-input" placeholder="Buscar..." oninput="filterFiles(this.value)">
   </div>
   <div id="fileList">${fileListHtml}</div>
+
+  <div class="docs-promo" style="margin-top:32px">
+    <div class="docs-promo-text">
+      <div style="font-size:16px;font-weight:600;margin-bottom:4px">API para desarrolladores</div>
+      <div style="font-size:13px;color:var(--text-muted);line-height:1.6">Conecta esta plataforma con tu app en Node.js, Python, Java o cualquier lenguaje. Sube, lista, descarga y elimina archivos via REST API. Documentacion completa con ejemplos de codigo.</div>
+    </div>
+    <a href="/api/docs" class="btn btn-primary" style="flex-shrink:0">
+      ${IC.book} Ver documentacion
+    </a>
+  </div>
 </main>
 
 <!-- Media Player Modal -->
@@ -751,7 +769,7 @@ document.querySelectorAll('.modal-overlay').forEach(m => { m.addEventListener('c
 
 
 // ============================================
-// API DOCS
+// API DOCS (MULTI-LANGUAGE)
 // ============================================
 export function apiDocsPage(baseUrl) {
   return `<!DOCTYPE html>
@@ -762,115 +780,457 @@ export function apiDocsPage(baseUrl) {
 <title>API Reference - Cloud Media Host</title>
 <style>
 ${BASE_CSS}
-  .docs { max-width: 780px; margin: 0 auto; padding: 32px 24px; }
-  .docs h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 4px; }
-  .docs .subtitle { color: var(--text-muted); font-size: 14px; margin-bottom: 32px; }
-  .docs h2 { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin: 32px 0 12px; }
-  .endpoint { margin-bottom: 16px; }
-  .endpoint-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-  .method-badge { padding: 3px 8px; border-radius: var(--radius-sm); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+  .docs { max-width: 800px; margin: 0 auto; padding: 32px 24px 64px; }
+  .docs-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; flex-wrap: wrap; gap: 16px; }
+  .docs-header h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 4px; }
+  .docs-header .subtitle { color: var(--text-muted); font-size: 14px; }
+  .docs-header .subtitle code { color: var(--accent); }
+
+  .lang-switcher { display: flex; gap: 2px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 3px; }
+  .lang-btn {
+    padding: 6px 14px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500;
+    border: none; background: transparent; color: var(--text-muted); cursor: pointer;
+    transition: all var(--transition); font-family: var(--font);
+  }
+  .lang-btn.active { background: var(--accent); color: #fff; }
+  .lang-btn:hover:not(.active) { color: var(--text-primary); }
+
+  .docs h2 { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin: 36px 0 16px; }
+
+  .endpoint { margin-bottom: 20px; }
+  .endpoint-card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+  .endpoint-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; cursor: pointer; }
+  .endpoint-head:hover { background: var(--bg-surface-2); }
+  .method-badge { padding: 3px 8px; border-radius: var(--radius-sm); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; flex-shrink: 0; }
   .m-get { background: var(--success-subtle); color: var(--success); }
   .m-post { background: var(--info-subtle); color: var(--info); }
   .m-delete { background: var(--danger-subtle); color: var(--danger); }
-  .endpoint-path { font-family: 'SF Mono','Fira Code',monospace; font-size: 14px; color: var(--text-primary); }
-  .endpoint-desc { font-size: 13px; color: var(--text-muted); margin-bottom: 8px; }
-  pre { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 16px; overflow-x: auto; font-size: 12px; line-height: 1.7; margin: 8px 0; }
-  code { font-family: 'SF Mono','Fira Code',monospace; }
+  .endpoint-path { font-family: 'SF Mono','Fira Code',monospace; font-size: 13px; color: var(--text-primary); }
+  .endpoint-desc { font-size: 13px; color: var(--text-muted); flex: 1; text-align: right; }
+  .endpoint-body { padding: 0 16px 16px; }
+  .endpoint-body p { font-size: 13px; color: var(--text-secondary); line-height: 1.7; margin-bottom: 10px; }
+  pre { background: var(--bg-root); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px; overflow-x: auto; font-size: 12px; line-height: 1.7; margin: 8px 0; }
+  code { font-family: 'SF Mono','Fira Code',monospace; font-size: 12px; }
   pre code { color: var(--text-secondary); }
   .kw { color: var(--info); }
   .str { color: var(--success); }
   .cmt { color: var(--text-muted); }
   .docs a { color: var(--accent); }
+
+  .example-tabs { display: flex; gap: 2px; margin-bottom: 12px; }
+  .example-tab {
+    padding: 5px 12px; border-radius: var(--radius-sm); font-size: 12px; font-weight: 600;
+    border: 1px solid var(--border); background: transparent; color: var(--text-muted);
+    cursor: pointer; transition: all var(--transition); font-family: var(--font);
+  }
+  .example-tab.active { background: var(--bg-surface-2); color: var(--text-primary); border-color: var(--border-hover); }
+  .example-panel { display: none; }
+  .example-panel.active { display: block; }
+
+  .back-link { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted); margin-bottom: 24px; cursor: pointer; transition: color var(--transition); }
+  .back-link:hover { color: var(--text-primary); }
+
+  .note-box { background: var(--accent-subtle); border: 1px solid rgba(249,115,22,0.2); border-radius: var(--radius-md); padding: 14px 16px; margin: 16px 0; font-size: 13px; color: var(--text-secondary); line-height: 1.6; }
+  .note-box strong { color: var(--accent); }
+
+  @media (max-width: 640px) {
+    .docs-header { flex-direction: column; }
+    .endpoint-desc { display: none; }
+    .endpoint-head { flex-wrap: wrap; }
+  }
 </style>
 </head>
 <body>
 <div class="docs">
-  <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">${IC.cloud} <span style="color:var(--text-muted);font-size:13px;font-weight:500">API Reference</span></div>
-  <h1>Cloud Media Host</h1>
-  <p class="subtitle">Base URL: <code style="color:var(--accent)">${baseUrl}</code></p>
+  <a href="/" class="back-link">${IC.chevronRight.replace('path','path transform="rotate(180deg)"')} Back to dashboard</a>
 
-  <h2>Configuracion</h2>
+  <div class="docs-header">
+    <div>
+      <h1 id="t-title">API Reference</h1>
+      <p class="subtitle" id="t-subtitle">Base URL: <code>${baseUrl}</code></p>
+    </div>
+    <div class="lang-switcher">
+      <button class="lang-btn active" onclick="setLang('es')">Español</button>
+      <button class="lang-btn" onclick="setLang('en')">English</button>
+      <button class="lang-btn" onclick="setLang('pt')">Português</button>
+    </div>
+  </div>
+
+  <div class="note-box" id="t-note">
+    <strong>Nota:</strong> Todos los endpoints responden en JSON. Para solicitudes desde navegador, la raíz <code>/</code> devuelve HTML. Agrega <code>Accept: application/json</code> para forzar JSON.
+  </div>
+
+  <h2 id="t-h-config">Configuración</h2>
 
   <div class="endpoint">
-    <div class="endpoint-head"><span class="method-badge m-get">GET</span><span class="endpoint-path">/api/status</span></div>
-    <p class="endpoint-desc">Estado actual del sistema y servicios configurados</p>
-    <pre><code><span class="cmt">// Response</span>
-{ <span class="str">"configured"</span>: true, <span class="str">"services"</span>: { <span class="str">"drive"</span>: true, <span class="str">"cloudinary"</span>: false }, <span class="str">"file_count"</span>: 5 }</code></pre>
+    <div class="endpoint-card">
+      <div class="endpoint-head">
+        <span class="method-badge m-get">GET</span>
+        <span class="endpoint-path">/api/status</span>
+        <span class="endpoint-desc" id="t-status-desc">Estado del sistema</span>
+      </div>
+      <div class="endpoint-body">
+        <pre><code>GET /api/status
+<span class="cmt">// Response</span>
+{
+  <span class="str">"configured"</span>: <span class="kw">true</span>,
+  <span class="str">"services"</span>: { <span class="str">"drive"</span>: <span class="kw">true</span>, <span class="str">"cloudinary"</span>: <span class="kw">false</span> },
+  <span class="str">"file_count"</span>: <span class="kw">5</span>,
+  <span class="str">"has_admin_password"</span>: <span class="kw">true</span>
+}</code></pre>
+      </div>
+    </div>
   </div>
 
   <div class="endpoint">
-    <div class="endpoint-head"><span class="method-badge m-post">POST</span><span class="endpoint-path">/api/config</span></div>
-    <p class="endpoint-desc">Guardar credenciales (solo primera vez o con admin password)</p>
-    <pre><code><span class="cmt">// Body</span>
-{ <span class="str">"drive_credentials"</span>: { ... }, <span class="str">"drive_folder_id"</span>: <span class="str">"1xKj..."</span> }
-<span class="cmt">// Header (si ya hay config): X-Admin-Key: password</span></code></pre>
+    <div class="endpoint-card">
+      <div class="endpoint-head">
+        <span class="method-badge m-post">POST</span>
+        <span class="endpoint-path">/api/config</span>
+        <span class="endpoint-desc" id="t-config-desc">Guardar credenciales</span>
+      </div>
+      <div class="endpoint-body">
+        <pre><code>POST /api/config
+Content-Type: application/json
+<span class="cmt">// Header si ya hay config: X-Admin-Key: tu_password</span>
+
+{
+  <span class="str">"drive_credentials"</span>: {
+    <span class="str">"type"</span>: <span class="str">"service_account"</span>,
+    <span class="str">"client_email"</span>: <span class="str">"xxx@xxx.iam.gserviceaccount.com"</span>,
+    <span class="str">"private_key"</span>: <span class="str">"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"</span>
+  },
+  <span class="str">"drive_folder_id"</span>: <span class="str">"1aBcDeF..."</span>,
+  <span class="str">"admin_password"</span>: <span class="str">"mi_password"</span>,
+  <span class="str">"cloudinary_cloud_name"</span>: <span class="str">"tu_cloud"</span>,
+  <span class="str">"cloudinary_upload_preset"</span>: <span class="str">"unsigned_preset"</span>
+}</code></pre>
+      </div>
+    </div>
   </div>
 
   <div class="endpoint">
-    <div class="endpoint-head"><span class="method-badge m-delete">DEL</span><span class="endpoint-path">/api/config</span></div>
-    <p class="endpoint-desc">Resetear toda la configuracion (admin)</p>
+    <div class="endpoint-card">
+      <div class="endpoint-head">
+        <span class="method-badge m-delete">DEL</span>
+        <span class="endpoint-path">/api/config</span>
+        <span class="endpoint-desc" id="t-reset-desc">Resetear configuración (admin)</span>
+      </div>
+      <div class="endpoint-body">
+        <pre><code>DELETE /api/config
+X-Admin-Key: tu_password
+
+<span class="cmt">// Response</span>
+{ <span class="str">"success"</span>: <span class="kw">true</span>, <span class="str">"message"</span>: <span class="str">"..."</span> }</code></pre>
+      </div>
+    </div>
   </div>
 
-  <h2>Archivos</h2>
+  <h2 id="t-h-files">Archivos</h2>
 
   <div class="endpoint">
-    <div class="endpoint-head"><span class="method-badge m-post">POST</span><span class="endpoint-path">/api/upload</span></div>
-    <p class="endpoint-desc">Subir archivo (multipart/form-data, campo "file")</p>
-    <pre><code><span class="cmt">// Response</span>
-{ <span class="str">"success"</span>: true, <span class="str">"file"</span>: { <span class="str">"id"</span>: <span class="str">"abc123"</span>, <span class="str">"name"</span>: <span class="str">"song.mp3"</span>, <span class="str">"download_url"</span>: <span class="str">"https://..."</span> } }</code></pre>
+    <div class="endpoint-card">
+      <div class="endpoint-head">
+        <span class="method-badge m-post">POST</span>
+        <span class="endpoint-path">/api/upload</span>
+        <span class="endpoint-desc" id="t-upload-desc">Subir archivo</span>
+      </div>
+      <div class="endpoint-body">
+        <pre><code>POST /api/upload
+Content-Type: multipart/form-data
+
+<span class="cmt">// Campo: "file" — Archivo a subir</span>
+<span class="cmt">// Tipos permitidos: MP3, MP4, WAV, ZIP, RAR, JPG, PNG, GIF, WebP</span>
+<span class="cmt">// Max: 100MB</span>
+
+<span class="cmt">// Response</span>
+{
+  <span class="str">"success"</span>: <span class="kw">true</span>,
+  <span class="str">"file"</span>: {
+    <span class="str">"id"</span>: <span class="str">"abc123def456"</span>,
+    <span class="str">"name"</span>: <span class="str">"song.mp3"</span>,
+    <span class="str">"type"</span>: <span class="str">"audio/mpeg"</span>,
+    <span class="str">"size"</span>: <span class="kw">4521984</span>,
+    <span class="str">"size_display"</span>: <span class="str">"4.3 MB"</span>,
+    <span class="str">"download_url"</span>: <span class="str">"https://drive.usercontent.google.com/..."</span>,
+    <span class="str">"embed_url"</span>: <span class="str">"https://drive.google.com/file/d/.../preview"</span>,
+    <span class="str">"created_at"</span>: <span class="str">"2026-04-05T12:00:00.000Z"</span>
+  }
+}</code></pre>
+      </div>
+    </div>
   </div>
 
   <div class="endpoint">
-    <div class="endpoint-head"><span class="method-badge m-get">GET</span><span class="endpoint-path">/api/files</span></div>
-    <p class="endpoint-desc">Listar todos los archivos</p>
+    <div class="endpoint-card">
+      <div class="endpoint-head">
+        <span class="method-badge m-get">GET</span>
+        <span class="endpoint-path">/api/files</span>
+        <span class="endpoint-desc" id="t-list-desc">Listar archivos</span>
+      </div>
+      <div class="endpoint-body">
+        <pre><code>GET /api/files
+
+<span class="cmt">// Response</span>
+{
+  <span class="str">"files"</span>: [ { <span class="str">"id"</span>: <span class="str">"..."</span>, <span class="str">"name"</span>: <span class="str">"..."</span>, <span class="str">"download_url"</span>: <span class="str">"..."</span> } ],
+  <span class="str">"total"</span>: <span class="kw">12</span>
+}</code></pre>
+      </div>
+    </div>
   </div>
 
   <div class="endpoint">
-    <div class="endpoint-head"><span class="method-badge m-get">GET</span><span class="endpoint-path">/api/files/:id</span></div>
-    <p class="endpoint-desc">Informacion de un archivo especifico</p>
+    <div class="endpoint-card">
+      <div class="endpoint-head">
+        <span class="method-badge m-get">GET</span>
+        <span class="endpoint-path">/api/files/:id</span>
+        <span class="endpoint-desc" id="t-info-desc">Info de archivo</span>
+      </div>
+      <div class="endpoint-body">
+        <pre><code>GET /api/files/abc123def456
+
+<span class="cmt">// Response</span>
+{ <span class="str">"file"</span>: { <span class="str">"id"</span>: <span class="str">"abc123def456"</span>, <span class="str">"name"</span>: <span class="str">"video.mp4"</span>, ... } }</code></pre>
+      </div>
+    </div>
   </div>
 
   <div class="endpoint">
-    <div class="endpoint-head"><span class="method-badge m-get">GET</span><span class="endpoint-path">/api/files/:id/download</span></div>
-    <p class="endpoint-desc">Descargar archivo (redirect 302 a Google Drive)</p>
+    <div class="endpoint-card">
+      <div class="endpoint-head">
+        <span class="method-badge m-get">GET</span>
+        <span class="endpoint-path">/api/files/:id/download</span>
+        <span class="endpoint-desc" id="t-dl-desc">Descargar archivo</span>
+      </div>
+      <div class="endpoint-body">
+        <pre><code>GET /api/files/abc123def456/download
+
+<span class="cmt">// Response: 302 Redirect a Google Drive o Cloudinary</span></code></pre>
+      </div>
+    </div>
   </div>
 
   <div class="endpoint">
-    <div class="endpoint-head"><span class="method-badge m-delete">DEL</span><span class="endpoint-path">/api/files/:id</span></div>
-    <p class="endpoint-desc">Eliminar un archivo (admin)</p>
+    <div class="endpoint-card">
+      <div class="endpoint-head">
+        <span class="method-badge m-delete">DEL</span>
+        <span class="endpoint-path">/api/files/:id</span>
+        <span class="endpoint-desc" id="t-del-desc">Eliminar archivo (admin)</span>
+      </div>
+      <div class="endpoint-body">
+        <pre><code>DELETE /api/files/abc123def456
+X-Admin-Key: tu_password
+
+{ <span class="str">"success"</span>: <span class="kw">true</span>, <span class="str">"message"</span>: <span class="str">"Archivo eliminado"</span> }</code></pre>
+      </div>
+    </div>
   </div>
 
-  <div class="endpoint">
-    <div class="endpoint-head"><span class="method-badge m-delete">DEL</span><span class="endpoint-path">/api/files</span></div>
-    <p class="endpoint-desc">Eliminar todos los archivos (admin)</p>
+  <h2 id="t-h-examples">Ejemplos de código</h2>
+
+  <div class="example-tabs">
+    <button class="example-tab active" onclick="showTab('nodejs',this)">Node.js</button>
+    <button class="example-tab" onclick="showTab('python',this)">Python</button>
+    <button class="example-tab" onclick="showTab('java',this)">Java</button>
+    <button class="example-tab" onclick="showTab('curl',this)">cURL</button>
   </div>
 
-  <h2>Ejemplos</h2>
-
-  <h2 style="font-size:14px;color:var(--text-secondary);text-transform:none;letter-spacing:0">Node.js</h2>
-  <pre><code><span class="kw">const</span> form = <span class="kw">new</span> FormData();
+  <div class="example-panel active" id="panel-nodejs">
+    <pre><code><span class="cmt">// Upload file</span>
+<span class="kw">const</span> fs = <span class="kw">require</span>(<span class="str">'fs'</span>);
+<span class="kw">const</span> form = <span class="kw">new</span> FormData();
 form.append(<span class="str">'file'</span>, fs.createReadStream(<span class="str">'song.mp3'</span>));
-<span class="kw">const</span> res = <span class="kw">await</span> fetch(<span class="str">'${baseUrl}/api/upload'</span>, { method: <span class="str">'POST'</span>, body: form });
+
+<span class="kw">const</span> res = <span class="kw">await</span> fetch(<span class="str">'${baseUrl}/api/upload'</span>, {
+  method: <span class="str">'POST'</span>, body: form
+});
 <span class="kw">const</span> data = <span class="kw">await</span> res.json();
-<span class="cmt">// data.file.download_url = enlace publico</span></code></pre>
+console.log(data.file.download_url); <span class="cmt">// Public link</span>
 
-  <h2 style="font-size:14px;color:var(--text-secondary);text-transform:none;letter-spacing:0">Python</h2>
-  <pre><code><span class="kw">import</span> requests
-<span class="kw">with</span> open(<span class="str">"song.mp3"</span>, <span class="str">"rb"</span>) <span class="kw">as</span> f:
-    r = requests.post(<span class="str">"${baseUrl}/api/upload"</span>, files={<span class="str">"file"</span>: f})
-archivo = r.json()
+<span class="cmt">// List files</span>
+<span class="kw">const</span> list = <span class="kw">await</span> (await fetch(<span class="str">'${baseUrl}/api/files'</span>)).json();
 
-<span class="cmt"># Streaming download</span>
-r = requests.get(<span class="str">f"${baseUrl}/api/files/{archivo['file']['id']}/download"</span>, stream=<span class="kw">True</span>)
-<span class="kw">with</span> open(<span class="str">"out.mp3"</span>, <span class="str">"wb"</span>) <span class="kw">as</span> f:
-    <span class="kw">for</span> chunk <span class="kw">in</span> r.iter_content(8192): f.write(chunk)</code></pre>
+<span class="cmt">// Delete file (admin)</span>
+<span class="kw">await</span> fetch(<span class="str">\`\${baseUrl}/api/files/\${id}\`</span>, {
+  method: <span class="str">'DELETE'</span>,
+  headers: { <span class="str">'X-Admin-Key'</span>: <span class="str">'your_password'</span> }
+});</code></pre>
+  </div>
 
-  <h2 style="font-size:14px;color:var(--text-secondary);text-transform:none;letter-spacing:0">cURL</h2>
-  <pre><code>curl -X POST <span class="str">"${baseUrl}/api/upload"</span> -F <span class="str">"file=@song.mp3"</span>
+  <div class="example-panel" id="panel-python">
+    <pre><code><span class="kw">import</span> requests
+
+BASE = <span class="str">"${baseUrl}"</span>
+
+<span class="cmt"># Upload file</span>
+<span class="kw">with</span> open(<span class="str">"video.mp4"</span>, <span class="str">"rb"</span>) <span class="kw">as</span> f:
+    r = requests.post(f<span class="str">"{BASE}/api/upload"</span>, files={<span class="str">"file"</span>: f})
+data = r.json()
+print(data[<span class="str">"file"</span>][<span class="str">"download_url"</span>])
+
+<span class="cmt"># List files</span>
+files = requests.get(f<span class="str">"{BASE}/api/files"</span>).json()
+
+<span class="cmt"># Download file (streaming)</span>
+r = requests.get(f<span class="str">"{BASE}/api/files/{id}/download"</span>, stream=<span class="kw">True</span>)
+<span class="kw">with</span> open(<span class="str">"out.mp4"</span>, <span class="str">"wb"</span>) <span class="kw">as</span> f:
+    <span class="kw">for</span> chunk <span class="kw">in</span> r.iter_content(8192):
+        f.write(chunk)
+
+<span class="cmt"># Delete file (admin)</span>
+requests.delete(
+    f<span class="str">"{BASE}/api/files/{id}"</span>,
+    headers={<span class="str">"X-Admin-Key"</span>: <span class="str">"your_password"</span>}
+)</code></pre>
+  </div>
+
+  <div class="example-panel" id="panel-java">
+    <pre><code><span class="cmt">// Upload file using HttpURLConnection</span>
+<span class="kw">import</span> java.io.*;
+<span class="kw">import</span> java.net.http.*;
+
+String base = <span class="str">"${baseUrl}"</span>;
+HttpClient client = HttpClient.newHttpClient();
+
+<span class="cmt">// Build multipart request</span>
+String boundary = <span class="str">"---BOUNDARY"</span>;
+Path file = Path.of(<span class="str">"song.mp3"</span>);
+String body = <span class="str">"--"</span> + boundary + <span class="str">"\\r\\n"</span> +
+  <span class="str">"Content-Disposition: form-data; name=\\"file\\"; filename=\\""</span> +
+  file.getFileName() + <span class="str">"\\"\\r\\n"</span> +
+  <span class="str">"Content-Type: audio/mpeg\\r\\n\\r\\n"</span> +
+  Files.readString(file) + <span class="str">"\\r\\n--"</span> + boundary + <span class="str">"--\\r\\n"</span>;
+
+HttpRequest req = HttpRequest.newBuilder()
+  .uri(URI.create(base + <span class="str">"/api/upload"</span>))
+  .header(<span class="str">"Content-Type"</span>, <span class="str">"multipart/form-data; boundary="</span> + boundary)
+  .POST(HttpRequest.BodyPublishers.ofString(body))
+  .build();
+
+HttpResponse&lt;String&gt; res = client.send(req,
+  HttpResponse.BodyHandlers.ofString());
+
+<span class="cmt">// Parse JSON response to get download_url</span>
+System.out.println(res.body());</code></pre>
+  </div>
+
+  <div class="example-panel" id="panel-curl">
+    <pre><code><span class="cmt"># Upload file</span>
+curl -X POST <span class="str">"${baseUrl}/api/upload"</span> \\
+  -F <span class="str">"file=@song.mp3"</span>
+
+<span class="cmt"># List files</span>
 curl <span class="str">"${baseUrl}/api/files"</span>
-curl -L <span class="str">"${baseUrl}/api/files/ID/download"</span> -o song.mp3
-curl -X DELETE <span class="str">"${baseUrl}/api/files/ID"</span> -H <span class="str">"X-Admin-Key: password"</span></code></pre>
+
+<span class="cmt"># Get file info</span>
+curl <span class="str">"${baseUrl}/api/files/FILE_ID"</span>
+
+<span class="cmt"># Download file</span>
+curl -L <span class="str">"${baseUrl}/api/files/FILE_ID/download"</span> -o out.mp3
+
+<span class="cmt"># Delete file (admin)</span>
+curl -X DELETE <span class="str">"${baseUrl}/api/files/FILE_ID"</span> \\
+  -H <span class="str">"X-Admin-Key: your_password"</span>
+
+<span class="cmt"># Check system status</span>
+curl <span class="str">"${baseUrl}/api/status"</span></code></pre>
+  </div>
+
+  <div class="note-box" id="t-streaming-note">
+    <strong id="t-streaming-title">Streaming:</strong> <span id="t-streaming-text">Para integrar con reproductores de video/audio, usa la URL de download directamente en tu tag &lt;video&gt; o &lt;audio&gt;. Si Cloudinary está configurado, se redirige al stream CDN optimizado.</span>
+  </div>
 </div>
+
+<script>
+// Language system
+const T = {
+  es: {
+    title: 'API Reference', subtitle: 'Base URL:',
+    hConfig: 'Configuración', hFiles: 'Archivos', hExamples: 'Ejemplos de código',
+    statusDesc: 'Estado del sistema',
+    configDesc: 'Guardar credenciales',
+    resetDesc: 'Resetear configuración (admin)',
+    uploadDesc: 'Subir archivo',
+    listDesc: 'Listar archivos',
+    infoDesc: 'Info de archivo',
+    dlDesc: 'Descargar archivo',
+    delDesc: 'Eliminar archivo (admin)',
+    note: '<strong>Nota:</strong> Todos los endpoints responden en JSON. Para solicitudes desde navegador, la raíz <code>/</code> devuelve HTML. Agrega <code>Accept: application/json</code> para forzar JSON.',
+    streamingTitle: 'Streaming:',
+    streamingText: 'Para integrar con reproductores de video/audio, usa la URL de download directamente en tu tag &lt;video&gt; o &lt;audio&gt;. Si Cloudinary está configurado, se redirige al stream CDN optimizado.',
+    back: 'Volver al dashboard'
+  },
+  en: {
+    title: 'API Reference', subtitle: 'Base URL:',
+    hConfig: 'Configuration', hFiles: 'Files', hExamples: 'Code Examples',
+    statusDesc: 'System status',
+    configDesc: 'Save credentials',
+    resetDesc: 'Reset configuration (admin)',
+    uploadDesc: 'Upload file',
+    listDesc: 'List files',
+    infoDesc: 'File info',
+    dlDesc: 'Download file',
+    delDesc: 'Delete file (admin)',
+    note: '<strong>Note:</strong> All endpoints respond in JSON. Browser requests to <code>/</code> return HTML. Add <code>Accept: application/json</code> to force JSON response.',
+    streamingTitle: 'Streaming:',
+    streamingText: 'To integrate with video/audio players, use the download URL directly in your &lt;video&gt; or &lt;audio&gt; tag. If Cloudinary is configured, it redirects to the optimized CDN stream.',
+    back: 'Back to dashboard'
+  },
+  pt: {
+    title: 'Referência da API', subtitle: 'URL Base:',
+    hConfig: 'Configuração', hFiles: 'Arquivos', hExamples: 'Exemplos de código',
+    statusDesc: 'Status do sistema',
+    configDesc: 'Salvar credenciais',
+    resetDesc: 'Resetar configuração (admin)',
+    uploadDesc: 'Enviar arquivo',
+    listDesc: 'Listar arquivos',
+    infoDesc: 'Info do arquivo',
+    dlDesc: 'Baixar arquivo',
+    delDesc: 'Excluir arquivo (admin)',
+    note: '<strong>Nota:</strong> Todos os endpoints respondem em JSON. Requisições do navegador para <code>/</code> retornam HTML. Adicione <code>Accept: application/json</code> para forçar JSON.',
+    streamingTitle: 'Streaming:',
+    streamingText: 'Para integrar com reprodutores de vídeo/áudio, use a URL de download diretamente na tag &lt;video&gt; ou &lt;audio&gt;. Se o Cloudinary estiver configurado, redireciona para o stream CDN otimizado.',
+    back: 'Voltar ao dashboard'
+  }
+};
+
+function setLang(lang) {
+  const t = T[lang];
+  document.querySelectorAll('.lang-btn').forEach((b,i) => {
+    b.classList.toggle('active', ['es','en','pt'][i] === lang);
+  });
+  document.getElementById('t-title').textContent = t.title;
+  document.getElementById('t-subtitle').innerHTML = t.subtitle + ' <code>${baseUrl}</code>';
+  document.getElementById('t-h-config').textContent = t.hConfig;
+  document.getElementById('t-h-files').textContent = t.hFiles;
+  document.getElementById('t-h-examples').textContent = t.hExamples;
+  document.getElementById('t-status-desc').textContent = t.statusDesc;
+  document.getElementById('t-config-desc').textContent = t.configDesc;
+  document.getElementById('t-reset-desc').textContent = t.resetDesc;
+  document.getElementById('t-upload-desc').textContent = t.uploadDesc;
+  document.getElementById('t-list-desc').textContent = t.listDesc;
+  document.getElementById('t-info-desc').textContent = t.infoDesc;
+  document.getElementById('t-dl-desc').textContent = t.dlDesc;
+  document.getElementById('t-del-desc').textContent = t.delDesc;
+  document.getElementById('t-note').innerHTML = t.note;
+  document.getElementById('t-streaming-title').textContent = t.streamingTitle;
+  document.getElementById('t-streaming-text').textContent = t.streamingText;
+  document.querySelector('.back-link').innerHTML = '${IC.chevronRight.replace("path","path transform=\\"rotate(180deg)\\"")} ' + t.back;
+  localStorage.setItem('cmh_lang', lang);
+}
+
+function showTab(id, btn) {
+  document.querySelectorAll('.example-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.example-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('panel-' + id).classList.add('active');
+  btn.classList.add('active');
+}
+
+// Restore saved language
+const saved = localStorage.getItem('cmh_lang');
+if (saved && T[saved]) setLang(saved);
+</script>
 </body>
 </html>`;
 }
