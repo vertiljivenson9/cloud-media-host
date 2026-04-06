@@ -919,6 +919,14 @@ async function handleAuthDisconnect(request, env) {
 // GET /api/drive/folders — List folders from Google Drive (for folder picker)
 async function handleListDriveFolders(request, env) {
   try {
+    // Require authentication (Firebase or admin password)
+    if (env.FIREBASE_PROJECT_ID) {
+      const { user } = await authenticateRequest(request, env);
+      if (!user) {
+        return json({ success: false, error: 'Autenticacion requerida' }, 401);
+      }
+    }
+
     const url = new URL(request.url);
     const parentId = url.searchParams.get('parentId') || 'root';
     const pageToken = url.searchParams.get('pageToken') || null;
@@ -952,8 +960,9 @@ async function handleListDriveFolders(request, env) {
 
     const params = new URLSearchParams({
       q: query,
-      fields: 'nextPageToken, files(id,name,parents)',
+      fields: 'nextPageToken, files(id,name,mimeType)',
       pageSize: '50',
+      corpora: 'user',
       supportsAllDrives: 'true',
       includeItemsFromAllDrives: 'true'
     });

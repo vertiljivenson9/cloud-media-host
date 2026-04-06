@@ -1249,7 +1249,12 @@ ${BASE_CSS}
     if (searchQuery) url += '&q=' + encodeURIComponent(searchQuery);
 
     try {
-      var res = await fetch(url);
+      var fetchOpts = { credentials: 'include' };
+      // Send Firebase token if available
+      if (window.__firebaseToken) {
+        fetchOpts.headers = { 'Authorization': 'Bearer ' + window.__firebaseToken };
+      }
+      var res = await fetch(url, fetchOpts);
       var data = await res.json();
 
       if (!data.success) {
@@ -1260,9 +1265,6 @@ ${BASE_CSS}
         return;
       }
 
-      if (!searchQuery) {
-        dpBreadcrumbTrail = dpBreadcrumbTrail.slice(0, dpBreadcrumbTrail.length);
-      }
       dpRenderBreadcrumb(searchQuery);
       dpRenderFolders(data.folders);
     } catch(err) {
@@ -1279,46 +1281,61 @@ ${BASE_CSS}
     }
 
     folders.forEach(function(folder) {
+      // Skip non-folder items (safety filter in case backend returns files)
+      if (folder.mimeType && folder.mimeType !== 'application/vnd.google-apps.folder') return;
+
       var item = document.createElement('div');
       item.className = 'drive-picker-item';
-      item.innerHTML =
-        '<div class="dpi-icon">' + '${IC.folder}' + '</div>' +
-        '<div class="dpi-name" title="' + folder.name + '">' + folder.name + '</div>' +
-        '<div class="dpi-action"><button type="button" data-select="' + folder.id + '" data-name="' + folder.name.replace(/"/g, '&quot;') + '">Seleccionar</button></div>' +
-        '<div class="dpi-enter" title="Entrar en esta carpeta">' + '${IC.chevronRight}' + '</div>';
 
-      // Click "Seleccionar" button
-      item.querySelector('[data-select]').addEventListener('click', function(e) {
+      // Folder icon
+      var iconDiv = document.createElement('div');
+      iconDiv.className = 'dpi-icon';
+      iconDiv.innerHTML = '${IC.folder}';
+
+      // Folder name — click to enter subfolder
+      var nameDiv = document.createElement('div');
+      nameDiv.className = 'dpi-name';
+      nameDiv.textContent = folder.name;
+      nameDiv.title = folder.name;
+      nameDiv.addEventListener('click', function() {
+        dpBreadcrumbTrail.push({ id: folder.id, name: folder.name });
+        dpSearchInput.value = '';
+        dpLoadFolders(folder.id);
+      });
+
+      // "Seleccionar" button — explicit action, works on mobile
+      var actionDiv = document.createElement('div');
+      actionDiv.className = 'dpi-action';
+      var selectBtn = document.createElement('button');
+      selectBtn.type = 'button';
+      selectBtn.textContent = 'Seleccionar';
+      selectBtn.addEventListener('click', function(e) {
         e.stopPropagation();
         dpSelectFolder(folder, item);
       });
+      actionDiv.appendChild(selectBtn);
 
-      // Click chevron to enter subfolder
-      item.querySelector('.dpi-enter').addEventListener('click', function(e) {
+      // Chevron — enter subfolder
+      var enterDiv = document.createElement('div');
+      enterDiv.className = 'dpi-enter';
+      enterDiv.title = 'Entrar en esta carpeta';
+      enterDiv.innerHTML = '${IC.chevronRight}';
+      enterDiv.addEventListener('click', function(e) {
         e.stopPropagation();
         dpBreadcrumbTrail.push({ id: folder.id, name: folder.name });
         dpSearchInput.value = '';
         dpLoadFolders(folder.id);
       });
 
-      // Double click to enter
-      item.addEventListener('dblclick', function() {
-        dpBreadcrumbTrail.push({ id: folder.id, name: folder.name });
-        dpSearchInput.value = '';
-        dpLoadFolders(folder.id);
-      });
-
-      // Single click to highlight
-      item.addEventListener('click', function() {
-        dpSelectFolder(folder, item);
-      });
-
+      item.appendChild(iconDiv);
+      item.appendChild(nameDiv);
+      item.appendChild(actionDiv);
+      item.appendChild(enterDiv);
       dpList.appendChild(item);
     });
   }
 
   function dpSelectFolder(folder, itemEl) {
-    // Deselect all
     dpList.querySelectorAll('.drive-picker-item').forEach(function(el) {
       el.classList.remove('selected');
     });
@@ -1332,7 +1349,7 @@ ${BASE_CSS}
     if (searchQuery) {
       var label = document.createElement('span');
       label.style.color = 'var(--text-secondary)';
-      label.textContent = 'Resultados de busqueda: "' + searchQuery + '"';
+      label.textContent = 'Resultados: "' + searchQuery + '"';
       dpBreadcrumb.appendChild(label);
       return;
     }
@@ -1340,16 +1357,17 @@ ${BASE_CSS}
       if (idx > 0) {
         var sep = document.createElement('span');
         sep.className = 'bc-sep';
-        sep.textContent = '/';
+        sep.textContent = ' / ';
         dpBreadcrumb.appendChild(sep);
       }
       var span = document.createElement('span');
       span.className = 'bc-item';
       span.textContent = crumb.name;
+      var capturedIdx = idx;
       span.addEventListener('click', function() {
-        dpBreadcrumbTrail = dpBreadcrumbTrail.slice(0, idx + 1);
+        dpBreadcrumbTrail = dpBreadcrumbTrail.slice(0, capturedIdx + 1);
         dpSearchInput.value = '';
-        dpLoadFolders(crumb.id);
+        dpLoadFolders(dpBreadcrumbTrail[capturedIdx].id);
       });
       dpBreadcrumb.appendChild(span);
     });
