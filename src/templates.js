@@ -267,6 +267,7 @@ export function setupPage(existingConfig, authState) {
       </div>
       <div class="folder-entry-bottom">
         <input type="text" class="folder-url" placeholder="https://drive.google.com/drive/folders/... o solo el ID" value="${driveFid}">
+        <button type="button" class="browse-drive-btn" onclick="openDrivePicker(this)" title="Buscar en Google Drive">${IC.folder} Buscar en Drive</button>
       </div>
       ${fid ? `
       <div class="folder-api-section" onclick="this.classList.toggle('expanded')">
@@ -317,6 +318,7 @@ export function setupPage(existingConfig, authState) {
       </div>
       <div class="folder-entry-bottom">
         <input type="text" class="folder-url" placeholder="https://drive.google.com/drive/folders/... o solo el ID" value="">
+        <button type="button" class="browse-drive-btn" onclick="openDrivePicker(this)" title="Buscar en Google Drive">${IC.folder} Buscar en Drive</button>
       </div>
     </div>`;
 
@@ -459,6 +461,99 @@ ${BASE_CSS}
   .creds-toggle:hover { color: var(--text-secondary); }
   .creds-section.is-collapsed textarea { display: none; }
   .creds-section.is-collapsed .creds-toggle::after { content: ''; }
+
+  /* Folder Picker Button */
+  .browse-drive-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 14px; border: none; border-radius: var(--radius-md);
+    background: var(--accent); color: #fff;
+    font-family: var(--font); font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: all var(--transition); white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .browse-drive-btn:hover { background: var(--accent-hover); }
+  .browse-drive-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .browse-drive-btn svg { flex-shrink: 0; }
+  .folder-entry-bottom { display: flex; gap: 8px; align-items: center; }
+
+  /* Drive Folder Picker Modal */
+  .drive-picker-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.75); backdrop-filter: blur(6px);
+    z-index: 500; align-items: center; justify-content: center; padding: 20px;
+  }
+  .drive-picker-overlay.open { display: flex; }
+  .drive-picker-box {
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); width: 100%; max-width: 560px;
+    max-height: 80vh; display: flex; flex-direction: column;
+    animation: modalIn 200ms ease;
+  }
+  .drive-picker-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 16px 20px; border-bottom: 1px solid var(--border);
+  }
+  .drive-picker-header h3 { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .drive-picker-search {
+    padding: 10px 20px; border-bottom: 1px solid var(--border);
+  }
+  .drive-picker-search input {
+    width: 100%; padding: 8px 10px; font-size: 13px;
+    background: var(--bg-root); border: 1px solid var(--border);
+    border-radius: var(--radius-md); color: var(--text-primary);
+    font-family: var(--font); outline: none;
+  }
+  .drive-picker-search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); }
+  .drive-picker-breadcrumb {
+    padding: 8px 20px; font-size: 12px; color: var(--text-muted);
+    border-bottom: 1px solid var(--border); display: flex; align-items: center;
+    gap: 4px; flex-wrap: wrap; min-height: 34px;
+  }
+  .drive-picker-breadcrumb .bc-item {
+    cursor: pointer; color: var(--text-secondary); transition: color var(--transition);
+    padding: 2px 4px; border-radius: 4px;
+  }
+  .drive-picker-breadcrumb .bc-item:hover { color: var(--accent); background: var(--accent-subtle); }
+  .drive-picker-breadcrumb .bc-sep { color: var(--text-muted); font-size: 11px; }
+  .drive-picker-list {
+    flex: 1; overflow-y: auto; padding: 4px 0;
+  }
+  .drive-picker-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 20px; cursor: pointer; transition: background var(--transition);
+    border-bottom: 1px solid rgba(39,39,42,0.5);
+  }
+  .drive-picker-item:hover { background: var(--bg-surface-2); }
+  .drive-picker-item.selected { background: var(--accent-subtle); border-left: 3px solid var(--accent); }
+  .drive-picker-item .dpi-icon { color: var(--accent); flex-shrink: 0; display: flex; }
+  .drive-picker-item .dpi-name { flex: 1; font-size: 13px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .drive-picker-item .dpi-action { flex-shrink: 0; }
+  .drive-picker-item .dpi-action button {
+    background: none; border: 1px solid var(--border); color: var(--text-muted);
+    padding: 4px 8px; border-radius: var(--radius-sm); font-size: 11px;
+    font-family: var(--font); cursor: pointer; transition: all var(--transition);
+    display: flex; align-items: center; gap: 4px;
+  }
+  .drive-picker-item .dpi-action button:hover { color: var(--info); border-color: var(--info); background: var(--info-subtle); }
+  .drive-picker-item .dpi-enter {
+    background: none; border: none; color: var(--text-muted);
+    padding: 4px; border-radius: var(--radius-sm); cursor: pointer;
+    display: flex; transition: all var(--transition); flex-shrink: 0;
+  }
+  .drive-picker-item .dpi-enter:hover { color: var(--accent); background: var(--accent-subtle); }
+  .drive-picker-empty {
+    padding: 32px 20px; text-align: center; color: var(--text-muted); font-size: 13px;
+  }
+  .drive-picker-loading {
+    padding: 32px 20px; text-align: center; color: var(--text-muted); font-size: 13px;
+  }
+  .drive-picker-footer {
+    display: flex; justify-content: flex-end; gap: 8px;
+    padding: 12px 20px; border-top: 1px solid var(--border);
+  }
+  .drive-picker-footer .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  @keyframes dpSpin { to { transform: rotate(360deg); } }
+  .dp-spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.2); border-top-color: var(--accent); border-radius: 50%; animation: dpSpin 0.6s linear infinite; }
 </style>
 </head>
 <body>
@@ -470,6 +565,27 @@ ${BASE_CSS}
       <div id="firebase-user-email" style="font-size:12px;color:var(--text-muted)"></div>
     </div>
     <button id="firebase-signout-btn" class="btn btn-ghost" style="font-size:12px;padding:6px 12px">Cerrar sesion</button>
+  </div>
+</div>
+
+<!-- Drive Folder Picker Modal -->
+<div class="drive-picker-overlay" id="drivePickerOverlay">
+  <div class="drive-picker-box">
+    <div class="drive-picker-header">
+      <h3><span style="color:var(--accent)">${IC.folder}</span> Seleccionar carpeta de Drive</h3>
+      <button class="modal-close" id="drivePickerClose">${IC.x}</button>
+    </div>
+    <div class="drive-picker-search">
+      <input type="text" id="drivePickerSearch" placeholder="Buscar carpetas...">
+    </div>
+    <div class="drive-picker-breadcrumb" id="drivePickerBreadcrumb"></div>
+    <div class="drive-picker-list" id="drivePickerList">
+      <div class="drive-picker-loading"><span class="dp-spinner"></span> Cargando carpetas...</div>
+    </div>
+    <div class="drive-picker-footer">
+      <button class="btn btn-ghost" id="drivePickerCancel">Cancelar</button>
+      <button class="btn btn-primary" id="drivePickerOk" disabled>${IC.check} Seleccionar</button>
+    </div>
   </div>
 </div>
 
@@ -854,6 +970,14 @@ ${BASE_CSS}
 
     bottom.appendChild(urlInput);
 
+    var browseBtn = document.createElement('button');
+    browseBtn.type = 'button';
+    browseBtn.className = 'browse-drive-btn';
+    browseBtn.title = 'Buscar en Google Drive';
+    browseBtn.innerHTML = '${IC.folder} Buscar en Drive';
+    browseBtn.onclick = function() { openDrivePicker(browseBtn); };
+    bottom.appendChild(browseBtn);
+
     div.appendChild(top);
     div.appendChild(bottom);
     list.appendChild(div);
@@ -1046,6 +1170,189 @@ ${BASE_CSS}
   var redirectHint = document.getElementById('redirectUriHint');
   if (redirectHint) {
     redirectHint.textContent = window.location.origin + '/api/auth/callback';
+  }
+
+  // ============================================
+  // DRIVE FOLDER PICKER
+  // ============================================
+  var dpOverlay = document.getElementById('drivePickerOverlay');
+  var dpList = document.getElementById('drivePickerList');
+  var dpBreadcrumb = document.getElementById('drivePickerBreadcrumb');
+  var dpOkBtn = document.getElementById('drivePickerOk');
+  var dpCancelBtn = document.getElementById('drivePickerCancel');
+  var dpCloseBtn = document.getElementById('drivePickerClose');
+  var dpSearchInput = document.getElementById('drivePickerSearch');
+
+  var dpBreadcrumbTrail = [{ id: 'root', name: 'Mi Drive' }];
+  var dpSelectedFolder = null;
+  var dpTargetInput = null; // the input element that will receive the folder ID
+  var dpTargetEntry = null; // the folder-entry div (to also fill the name)
+
+  window.openDrivePicker = function(btn) {
+    dpTargetEntry = btn.closest('.folder-entry');
+    dpTargetInput = dpTargetEntry ? dpTargetEntry.querySelector('.folder-url') : null;
+    if (!dpTargetInput) return;
+    dpSelectedFolder = null;
+    dpOkBtn.disabled = true;
+    dpBreadcrumbTrail = [{ id: 'root', name: 'Mi Drive' }];
+    dpSearchInput.value = '';
+    dpOverlay.classList.add('open');
+    dpLoadFolders('root');
+  };
+
+  dpCloseBtn.onclick = function() { dpOverlay.classList.remove('open'); };
+  dpCancelBtn.onclick = function() { dpOverlay.classList.remove('open'); };
+
+  // Click outside modal box to close
+  dpOverlay.addEventListener('click', function(e) {
+    if (e.target === dpOverlay) dpOverlay.classList.remove('open');
+  });
+
+  dpOkBtn.onclick = function() {
+    if (!dpSelectedFolder || !dpTargetInput) return;
+    dpTargetInput.value = dpSelectedFolder.id;
+    // Auto-fill name if empty
+    var nameInput = dpTargetEntry.querySelector('.folder-name');
+    if (nameInput && !nameInput.value.trim()) {
+      nameInput.value = dpSelectedFolder.name;
+    }
+    dpOverlay.classList.remove('open');
+    // Show a toast confirmation
+    var toast = document.createElement('div');
+    toast.className = 'toast success';
+    toast.textContent = '✓ Carpeta seleccionada: ' + dpSelectedFolder.name;
+    document.body.appendChild(toast);
+    setTimeout(function() { toast.remove(); }, 2000);
+  };
+
+  // Search with debounce
+  var dpSearchTimeout = null;
+  dpSearchInput.addEventListener('input', function() {
+    clearTimeout(dpSearchTimeout);
+    dpSearchTimeout = setTimeout(function() {
+      var q = dpSearchInput.value.trim();
+      if (q.length >= 2) {
+        dpLoadFolders('root', q);
+      } else if (q.length === 0) {
+        var lastCrumb = dpBreadcrumbTrail[dpBreadcrumbTrail.length - 1];
+        dpLoadFolders(lastCrumb.id);
+      }
+    }, 400);
+  });
+
+  async function dpLoadFolders(parentId, searchQuery) {
+    dpList.innerHTML = '<div class="drive-picker-loading"><span class="dp-spinner"></span> Cargando carpetas...</div>';
+    dpSelectedFolder = null;
+    dpOkBtn.disabled = true;
+
+    var url = '/api/drive/folders?parentId=' + encodeURIComponent(parentId);
+    if (searchQuery) url += '&q=' + encodeURIComponent(searchQuery);
+
+    try {
+      var res = await fetch(url);
+      var data = await res.json();
+
+      if (!data.success) {
+        dpList.innerHTML = '<div class="drive-picker-empty" style="color:var(--danger)">' + (data.error || 'Error al cargar carpetas') + '</div>';
+        if (data.detail) {
+          dpList.innerHTML += '<div style="padding:8px 20px;font-size:11px;color:var(--text-muted)">' + data.detail + '</div>';
+        }
+        return;
+      }
+
+      if (!searchQuery) {
+        dpBreadcrumbTrail = dpBreadcrumbTrail.slice(0, dpBreadcrumbTrail.length);
+      }
+      dpRenderBreadcrumb(searchQuery);
+      dpRenderFolders(data.folders);
+    } catch(err) {
+      dpList.innerHTML = '<div class="drive-picker-empty" style="color:var(--danger)">Error de conexion: ' + err.message + '</div>';
+    }
+  }
+
+  function dpRenderFolders(folders) {
+    dpList.innerHTML = '';
+
+    if (folders.length === 0) {
+      dpList.innerHTML = '<div class="drive-picker-empty">No se encontraron carpetas</div>';
+      return;
+    }
+
+    folders.forEach(function(folder) {
+      var item = document.createElement('div');
+      item.className = 'drive-picker-item';
+      item.innerHTML =
+        '<div class="dpi-icon">' + '${IC.folder}' + '</div>' +
+        '<div class="dpi-name" title="' + folder.name + '">' + folder.name + '</div>' +
+        '<div class="dpi-action"><button type="button" data-select="' + folder.id + '" data-name="' + folder.name.replace(/"/g, '&quot;') + '">Seleccionar</button></div>' +
+        '<div class="dpi-enter" title="Entrar en esta carpeta">' + '${IC.chevronRight}' + '</div>';
+
+      // Click "Seleccionar" button
+      item.querySelector('[data-select]').addEventListener('click', function(e) {
+        e.stopPropagation();
+        dpSelectFolder(folder, item);
+      });
+
+      // Click chevron to enter subfolder
+      item.querySelector('.dpi-enter').addEventListener('click', function(e) {
+        e.stopPropagation();
+        dpBreadcrumbTrail.push({ id: folder.id, name: folder.name });
+        dpSearchInput.value = '';
+        dpLoadFolders(folder.id);
+      });
+
+      // Double click to enter
+      item.addEventListener('dblclick', function() {
+        dpBreadcrumbTrail.push({ id: folder.id, name: folder.name });
+        dpSearchInput.value = '';
+        dpLoadFolders(folder.id);
+      });
+
+      // Single click to highlight
+      item.addEventListener('click', function() {
+        dpSelectFolder(folder, item);
+      });
+
+      dpList.appendChild(item);
+    });
+  }
+
+  function dpSelectFolder(folder, itemEl) {
+    // Deselect all
+    dpList.querySelectorAll('.drive-picker-item').forEach(function(el) {
+      el.classList.remove('selected');
+    });
+    itemEl.classList.add('selected');
+    dpSelectedFolder = folder;
+    dpOkBtn.disabled = false;
+  }
+
+  function dpRenderBreadcrumb(searchQuery) {
+    dpBreadcrumb.innerHTML = '';
+    if (searchQuery) {
+      var label = document.createElement('span');
+      label.style.color = 'var(--text-secondary)';
+      label.textContent = 'Resultados de busqueda: "' + searchQuery + '"';
+      dpBreadcrumb.appendChild(label);
+      return;
+    }
+    dpBreadcrumbTrail.forEach(function(crumb, idx) {
+      if (idx > 0) {
+        var sep = document.createElement('span');
+        sep.className = 'bc-sep';
+        sep.textContent = '/';
+        dpBreadcrumb.appendChild(sep);
+      }
+      var span = document.createElement('span');
+      span.className = 'bc-item';
+      span.textContent = crumb.name;
+      span.addEventListener('click', function() {
+        dpBreadcrumbTrail = dpBreadcrumbTrail.slice(0, idx + 1);
+        dpSearchInput.value = '';
+        dpLoadFolders(crumb.id);
+      });
+      dpBreadcrumb.appendChild(span);
+    });
   }
 })();
 </script>
@@ -2244,14 +2551,30 @@ function uploadFiles(files) {
       if (xhr.status >= 400) {
         // Server returned an error
         let errMsg = 'Error al subir ' + file.name + ' (HTTP ' + xhr.status + ')';
+        let detailMsg = null;
         try {
           const d = JSON.parse(xhr.responseText);
           if (d.error) errMsg = d.error;
+          if (d.detail) detailMsg = d.detail;
         } catch(e) {
           if (xhr.responseText) errMsg = xhr.responseText.substring(0, 200);
         }
-        console.error('Upload FAILED:', errMsg);
+        console.error('Upload FAILED:', errMsg, detailMsg || '');
         toast(errMsg, 'error');
+        // Show detailed error as a second toast (e.g. file type lock explanation)
+        if (detailMsg) {
+          setTimeout(() => {
+            // Create a longer-lasting detail toast
+            var detailToast = document.createElement('div');
+            detailToast.className = 'toast error';
+            detailToast.style.maxWidth = '420px';
+            detailToast.style.whiteSpace = 'normal';
+            detailToast.style.lineHeight = '1.5';
+            detailToast.textContent = detailMsg;
+            document.body.appendChild(detailToast);
+            setTimeout(function() { detailToast.remove(); }, 8000);
+          }, 500);
+        }
         fill.style.background = 'var(--danger)';
         label.textContent = 'Error: ' + errMsg;
         setTimeout(() => { fill.style.background = 'var(--accent)'; }, 3000);
