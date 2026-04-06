@@ -1231,6 +1231,33 @@ async function handleUpload(request, env, url) {
     return json({ success: false, error: 'No hay carpeta de destino', step: 3, detail: 'No se definió drive_folder_id en la configuración y no se proporcionó folder_id.' }, 400);
   }
 
+  // Step 3.5: Per-folder file type lock
+  // The first file uploaded to a folder locks it to that type category.
+  // Subsequent uploads must match the same category.
+  if (folderId) {
+    try {
+      const existingFiles = await db.select('files', 'type', { filter: { folder_id: folderId }, limit: 1 });
+      if (existingFiles && existingFiles.length > 0 && existingFiles[0].type) {
+        const lockedCategory = getFileTypeCategory(existingFiles[0].type);
+        const uploadCategory = getFileTypeCategory(contentType);
+        if (lockedCategory !== uploadCategory) {
+          const lockedDesc = getCategoryDescription(lockedCategory);
+          const uploadDesc = getCategoryDescription(uploadCategory);
+          return json({
+            success: false,
+            error: `Tipo de archivo no permitido en esta carpeta`,
+            code: 'WRONG_FILE_TYPE',
+            step: 3,
+            detail: `La carpeta "${folderRecord?.name || folderId}" esta bloqueada para tipo: ${lockedDesc}. No puedes subir ${uploadDesc} aqui. El primer archivo subido a una carpeta define su tipo de contenido. Si necesitas subir otro tipo de archivo, crea una carpeta nueva desde el dashboard.`
+          }, 422);
+        }
+      }
+    } catch (e) {
+      // Non-critical: continue with upload if type check fails
+      console.warn('Folder type lock check failed:', e.message);
+    }
+  }
+
   console.log('Target Drive folder:', targetDriveFolderId);
 
   // Step 4: Upload to Google Drive
@@ -1445,4 +1472,29 @@ function getFileTypeDisplay(contentType) {
   if (contentType.includes('zip') || contentType.includes('rar') || contentType.includes('7z')) return 'Comprimido';
   if (contentType.startsWith('image/')) return 'Imagen';
   return 'Archivo';
+}
+
+// Get file type category from MIME type
+function getFileTypeCategory(contentType) {
+  if (!contentType) return 'other';
+  const t = contentType.toLowerCase();
+  if (t.startsWith('audio/')) return 'audio';
+  if (t.startsWith('video/')) return 'video';
+  if (t.startsWith('image/')) return 'image';
+  if (t.includes('zip') || t.includes('rar') || t.includes('7z') || t.includes('gzip') || t.includes('tar')) return 'archive';
+  if (t.includes('pdf') || t.includes('document') || t.includes('spreadsheet') || t.includes('presentation') || t.includes('msword') || t.includes('officedocument')) return 'document';
+  return 'other';
+}
+
+// Get friendly description of a file type category
+function getCategoryDescription(category) {
+  const descriptions = {
+    audio: 'Audio (MP3, WAV, OGG, AAC, FLAC...)',
+    video: 'Video (MP4, WebM, AVI, MOV...)',
+    image: 'Imagen (JPG, PNG, GIF, WebP, SVG...)',
+    archive: 'Archivo comprimido (ZIP, RAR, 7Z, TAR...)',
+    document: 'Documento (PDF, DOC, XLS, PPT...)',
+    other: 'Otros archivos',
+  };
+  return descriptions[category] || category;
 }

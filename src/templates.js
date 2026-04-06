@@ -2057,12 +2057,13 @@ function openFilePicker() {
   fileInput.click();
 }
 
-// Folder picker: use File System Access API (modern browsers) or fall back to webkitdirectory
+// Folder picker: always use webkitdirectory input (most compatible across browsers)
+// This opens a native file dialog where you select a FOLDER, then click OK/Upload
 async function openFolderPicker() {
-  // Try File System Access API first (Chrome 86+, Edge 86+, works on some Android)
+  // Try File System Access API first (Chrome 86+) — shows proper folder picker with OK button
   if (window.showDirectoryPicker) {
     try {
-      const dirHandle = await window.showDirectoryPicker();
+      const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
       const files = [];
       await collectFilesFromHandle(dirHandle, files, '');
       if (files.length > 0) {
@@ -2070,16 +2071,16 @@ async function openFolderPicker() {
       } else {
         toast('La carpeta seleccionada esta vacia', 'error');
       }
+      return;
     } catch (e) {
-      if (e.name === 'AbortError') return; // User cancelled
-      console.error('showDirectoryPicker error:', e);
-      toast('Error al seleccionar carpeta: ' + e.message, 'error');
+      if (e.name === 'AbortError') return;
+      // If showDirectoryPicker fails for any reason, fall through to webkitdirectory
+      console.warn('showDirectoryPicker failed, using fallback:', e.message);
     }
-  } else {
-    // Fallback: use webkitdirectory input
-    folderInput.value = '';
-    folderInput.click();
   }
+  // Fallback: webkitdirectory input — browser opens file dialog, user selects folder and clicks Upload/OK
+  folderInput.value = '';
+  folderInput.click();
 }
 
 // Recursively collect all files from a FileSystemDirectoryHandle
