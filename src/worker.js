@@ -338,14 +338,14 @@ async function handleIndex(request, env) {
   }
 
   // Attach folders to config for setup page compatibility
-  config.folders = folders.map(f => ({
+  config.folders = await Promise.all(folders.map(async f => ({
     id: f.id,
     name: f.name,
     drive_folder_id: f.drive_folder_id,
     drive_link: f.drive_link,
     created_at: f.created_at,
     api_key: await generateFolderApiKey(f.id, env),
-  }));
+  })));
 
   files.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
@@ -377,14 +377,14 @@ async function handleSetup(request, env) {
     if (config) {
       const db = getDb(env);
       const folders = await db.select('folders', '*', { order: 'created_at.desc' });
-      config.folders = folders.map(f => ({
+      config.folders = await Promise.all(folders.map(async f => ({
         id: f.id,
         name: f.name,
         drive_folder_id: f.drive_folder_id,
         drive_link: f.drive_link,
         created_at: f.created_at,
         api_key: await generateFolderApiKey(f.id, env),
-      }));
+      })));
     }
   } catch (e) {
     console.error('handleSetup error:', e.message);
