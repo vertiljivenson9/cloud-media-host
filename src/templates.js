@@ -520,27 +520,11 @@ ${BASE_CSS}
   }
   .drive-picker-item {
     display: flex; align-items: center; gap: 10px;
-    padding: 10px 20px; cursor: pointer; transition: background var(--transition);
+    padding: 12px 20px; cursor: default; transition: background var(--transition);
     border-bottom: 1px solid rgba(39,39,42,0.5);
   }
   .drive-picker-item:hover { background: var(--bg-surface-2); }
   .drive-picker-item.selected { background: var(--accent-subtle); border-left: 3px solid var(--accent); }
-  .drive-picker-item .dpi-icon { color: var(--accent); flex-shrink: 0; display: flex; }
-  .drive-picker-item .dpi-name { flex: 1; font-size: 13px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .drive-picker-item .dpi-action { flex-shrink: 0; }
-  .drive-picker-item .dpi-action button {
-    background: none; border: 1px solid var(--border); color: var(--text-muted);
-    padding: 4px 8px; border-radius: var(--radius-sm); font-size: 11px;
-    font-family: var(--font); cursor: pointer; transition: all var(--transition);
-    display: flex; align-items: center; gap: 4px;
-  }
-  .drive-picker-item .dpi-action button:hover { color: var(--info); border-color: var(--info); background: var(--info-subtle); }
-  .drive-picker-item .dpi-enter {
-    background: none; border: none; color: var(--text-muted);
-    padding: 4px; border-radius: var(--radius-sm); cursor: pointer;
-    display: flex; transition: all var(--transition); flex-shrink: 0;
-  }
-  .drive-picker-item .dpi-enter:hover { color: var(--accent); background: var(--accent-subtle); }
   .drive-picker-empty {
     padding: 32px 20px; text-align: center; color: var(--text-muted); font-size: 13px;
   }
@@ -1303,67 +1287,41 @@ ${BASE_CSS}
     }
 
     folders.forEach(function(folder) {
-      // Skip non-folder items (safety filter in case backend returns files)
       if (folder.mimeType && folder.mimeType !== 'application/vnd.google-apps.folder') return;
 
-      var item = document.createElement('div');
-      item.className = 'drive-picker-item';
+      var row = document.createElement('div');
+      row.className = 'drive-picker-item';
+      row.style.display = 'flex';
+      row.style.justifyContent = 'space-between';
+      row.style.alignItems = 'center';
 
-      // Folder icon
-      var iconDiv = document.createElement('div');
-      iconDiv.className = 'dpi-icon';
-      iconDiv.innerHTML = '${IC.folder}';
-
-      // Folder name — click to enter subfolder
-      var nameSpan = document.createElement('span');
-      nameSpan.className = 'dpi-name';
-      nameSpan.textContent = folder.name;
-      nameSpan.title = folder.name;
-      nameSpan.style.cssText = 'flex:1;font-size:13px;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer';
-      nameSpan.addEventListener('click', function() {
+      var name = document.createElement('span');
+      name.textContent = '\\uD83D\\uDCC1 ' + folder.name;
+      name.style.cssText = 'flex:1;font-size:13px;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;padding:4px 0';
+      name.addEventListener('click', function() {
         dpBreadcrumbTrail.push({ id: folder.id, name: folder.name });
         dpSearchInput.value = '';
         dpLoadFolders(folder.id);
       });
 
-      // Chevron — enter subfolder (visual affordance)
-      var enterBtn = document.createElement('button');
-      enterBtn.type = 'button';
-      enterBtn.className = 'dpi-enter';
-      enterBtn.title = 'Entrar en esta carpeta';
-      enterBtn.innerHTML = '${IC.chevronRight}';
-      enterBtn.addEventListener('click', function(e) {
-        e.stopPropagation();
-        dpBreadcrumbTrail.push({ id: folder.id, name: folder.name });
-        dpSearchInput.value = '';
-        dpLoadFolders(folder.id);
-      });
-
-      // "Seleccionar" button — explicit action, works on mobile
       var selectBtn = document.createElement('button');
       selectBtn.type = 'button';
-      selectBtn.textContent = 'Seleccionar';
-      selectBtn.style.cssText = 'background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);padding:6px 12px;font-size:11px;font-weight:600;font-family:var(--font);cursor:pointer;white-space:nowrap;flex-shrink:0;transition:all var(--transition)';
+      selectBtn.textContent = 'Usar esta carpeta';
+      selectBtn.style.cssText = 'background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);padding:8px 14px;font-size:12px;font-weight:600;font-family:var(--font);cursor:pointer;white-space:nowrap;flex-shrink:0;transition:opacity 150ms';
       selectBtn.addEventListener('click', function(e) {
         e.stopPropagation();
-        dpSelectFolder(folder, item);
+        dpSelectedFolder = folder;
+        dpOkBtn.disabled = false;
+        dpList.querySelectorAll('.drive-picker-item').forEach(function(el) {
+          el.classList.remove('selected');
+        });
+        row.classList.add('selected');
       });
 
-      item.appendChild(iconDiv);
-      item.appendChild(nameSpan);
-      item.appendChild(enterBtn);
-      item.appendChild(selectBtn);
-      dpList.appendChild(item);
+      row.appendChild(name);
+      row.appendChild(selectBtn);
+      dpList.appendChild(row);
     });
-  }
-
-  function dpSelectFolder(folder, itemEl) {
-    dpList.querySelectorAll('.drive-picker-item').forEach(function(el) {
-      el.classList.remove('selected');
-    });
-    itemEl.classList.add('selected');
-    dpSelectedFolder = folder;
-    dpOkBtn.disabled = false;
   }
 
   function dpRenderBreadcrumb(searchQuery) {
