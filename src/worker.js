@@ -79,9 +79,6 @@ export default {
         case '/api/auth/disconnect':
           if (request.method === 'POST') return handleAuthDisconnect(request, env);
           break;
-        case '/api/drive/folders':
-          if (request.method === 'GET') return handleListDriveFolders(request, env);
-          break;
         case '/api/auth/me':
           if (request.method === 'GET') return handleAuthMe(request, env);
           break;
@@ -130,7 +127,7 @@ export default {
 // ROUTER
 // ============================================
 function matchRoute(path) {
-  const exact = ['/', '/setup', '/api/docs', '/api/status', '/api/config', '/api/upload', '/api/files', '/api/folders', '/api/test-drive', '/api/auth', '/api/auth/me', '/api/auth/firebase-config', '/api/auth/disconnect', '/api/debug', '/api/verify-tables', '/api/drive/folders'];
+  const exact = ['/', '/setup', '/api/docs', '/api/status', '/api/config', '/api/upload', '/api/files', '/api/folders', '/api/test-drive', '/api/auth', '/api/auth/me', '/api/auth/firebase-config', '/api/auth/disconnect', '/api/debug', '/api/verify-tables'];
   for (const p of exact) {
     if (path === p) return { pattern: p, params: {} };
   }
@@ -266,8 +263,16 @@ async function handleAuthMe(request, env) {
   }
 }
 
-// GET /api/auth/firebase-config — Return Firebase config for frontend
+// GET /api/auth/firebase-config — Return Firebase config + OAuth2 config for frontend
 async function handleFirebaseConfig(request, env) {
+  // Also fetch OAuth2 config from DB (needed for Google Picker)
+  let oauth2_client_id = null;
+  let google_api_key = env.GOOGLE_API_KEY || null;
+  try {
+    const config = await getConfig(env);
+    if (config) oauth2_client_id = config.oauth2_client_id || null;
+  } catch (e) { /* not configured yet */ }
+
   const config = {
     firebase_enabled: !!env.FIREBASE_PROJECT_ID,
     project_id: env.FIREBASE_PROJECT_ID || null,
@@ -276,6 +281,9 @@ async function handleFirebaseConfig(request, env) {
     storage_bucket: env.FIREBASE_STORAGE_BUCKET || null,
     messaging_sender_id: env.FIREBASE_MESSAGING_SENDER_ID || null,
     app_id: env.FIREBASE_APP_ID || null,
+    // OAuth2 for Google Picker
+    oauth2_client_id: oauth2_client_id,
+    google_api_key: google_api_key,
   };
   return json(config);
 }
@@ -909,93 +917,6 @@ async function handleAuthDisconnect(request, env) {
     return json({ success: true, message: 'OAuth2 desconectado.' });
   } catch (e) {
     return json({ success: false, error: e.message }, 500);
-  }
-}
-
-// ============================================
-// DRIVE FOLDER BROWSER
-// ============================================
-
-// GET /api/drive/folders — List folders from Google Drive (for folder picker)
-async function handleListDriveFolders(request, env) {
-  try {
-    // Require authentication (Firebase or admin password)
-    if (env.FIREBASE_PROJECT_ID) {
-      const { user } = await authenticateRequest(request, env);
-      if (!user) {
-        return json({ success: false, error: 'Autenticacion requerida' }, 401);
-      }
-    }
-
-    const url = new URL(request.url);
-    const parentId = url.searchParams.get('parentId') || 'root';
-    const pageToken = url.searchParams.get('pageToken') || null;
-    const searchQuery = url.searchParams.get('q') || '';
-
-    const config = await getConfig(env);
-    if (!config) {
-      return json({ success: false, error: 'App no configurada' }, 400);
-    }
-
-    const hasCreds = !!(config.drive_credentials);
-    const hasOAuth2 = !!(config.oauth2_client_id && config.oauth2_refresh_token);
-    if (!hasCreds && !hasOAuth2) {
-      return json({ success: false, error: 'No hay credenciales de Google Drive configuradas. Configura OAuth2 o Service Account primero.' }, 400);
-    }
-
-    const authResult = await getDriveAccessToken(config);
-    const token = authResult.token;
-
-    // Build query: only folders, not trashed, under parentId
-    let queryParts = [
-      `'${parentId}' in parents`,
-      "mimeType='application/vnd.google-apps.folder'",
-      'trashed=false'
-    ];
-    // Add search filter if provided
-    if (searchQuery) {
-      queryParts.push(`name contains '${searchQuery.replace(/'/g, "\\'")}'`);
-    }
-    const query = queryParts.join(' and ');
-
-    const params = new URLSearchParams({
-      q: query,
-      fields: 'nextPageToken, files(id,name,mimeType)',
-      pageSize: '50',
-      corpora: 'user',
-      supportsAllDrives: 'true',
-      includeItemsFromAllDrives: 'true'
-    });
-
-    if (pageToken) params.set('pageToken', pageToken);
-
-    const res = await fetch(
-      `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-
-    const data = await res.json();
-
-    if (!res.ok) {
-      return json({
-        success: false,
-        error: 'Error al listar carpetas de Google Drive',
-        detail: data.error?.message || data
-      }, res.status);
-    }
-
-    return json({
-      success: true,
-      folders: data.files || [],
-      nextPageToken: data.nextPageToken || null,
-      parentId
-    });
-  } catch (err) {
-    return json({
-      success: false,
-      error: 'Error interno listando carpetas',
-      detail: err.message
-    }, 500);
   }
 }
 
