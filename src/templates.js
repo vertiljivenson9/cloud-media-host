@@ -1804,11 +1804,11 @@ ${BASE_CSS}
     <div class="uz-icon">${IC.upload}</div>
     <p>Suelta archivos o carpetas aqui o haz click para seleccionar</p>
     <p class="uz-hint">MP3 &middot; MP4 &middot; ZIP &middot; PNG &middot; JPG &middot; Carpetas</p>
-    <input type="file" id="fileInput" multiple accept=".mp3,.mp4,.zip,.rar,.7z,.jpg,.jpeg,.png,.gif,.webp,.wav,.ogg,.aac,.webm" style="display:none">
-    <input type="file" id="folderInput" webkitdirectory multiple accept=".mp3,.mp4,.zip,.rar,.7z,.jpg,.jpeg,.png,.gif,.webp,.wav,.ogg,.aac,.webm" style="display:none">
+    <input type="file" id="fileInput" multiple style="display:none">
+    <input type="file" id="folderInput" webkitdirectory multiple style="display:none">
     <div style="margin-top:12px;display:flex;gap:8px;justify-content:center">
-      <button type="button" class="btn btn-ghost" onclick="document.getElementById('fileInput').click()" style="font-size:12px;padding:6px 12px">Seleccionar archivos</button>
-      <button type="button" class="btn btn-ghost" onclick="document.getElementById('folderInput').click()" style="font-size:12px;padding:6px 12px">Seleccionar carpeta</button>
+      <button type="button" class="btn btn-ghost" onclick="openFilePicker()" style="font-size:12px;padding:6px 12px">Seleccionar archivos</button>
+      <button type="button" class="btn btn-primary" onclick="openFolderPicker()" style="font-size:12px;padding:6px 12px">Seleccionar carpeta</button>
     </div>
   </div>
 
@@ -2051,19 +2051,136 @@ const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
 const folderInput = document.getElementById('folderInput');
 
+// File picker: open file selector (shows all files, no restrictions)
+function openFilePicker() {
+  fileInput.value = '';
+  fileInput.click();
+}
+
+// Folder picker: use File System Access API (modern browsers) or fall back to webkitdirectory
+async function openFolderPicker() {
+  // Try File System Access API first (Chrome 86+, Edge 86+, works on some Android)
+  if (window.showDirectoryPicker) {
+    try {
+      const dirHandle = await window.showDirectoryPicker();
+      const files = [];
+      await collectFilesFromHandle(dirHandle, files, '');
+      if (files.length > 0) {
+        uploadFiles(files);
+      } else {
+        toast('La carpeta seleccionada esta vacia', 'error');
+      }
+    } catch (e) {
+      if (e.name === 'AbortError') return; // User cancelled
+      console.error('showDirectoryPicker error:', e);
+      toast('Error al seleccionar carpeta: ' + e.message, 'error');
+    }
+  } else {
+    // Fallback: use webkitdirectory input
+    folderInput.value = '';
+    folderInput.click();
+  }
+}
+
+// Recursively collect all files from a FileSystemDirectoryHandle
+async function collectFilesFromHandle(dirHandle, fileList, path) {
+  for await (const [name, handle] of dirHandle.entries()) {
+    if (handle.kind === 'file') {
+      try {
+        const file = await handle.getFile();
+        // Attach relative path info
+        Object.defineProperty(file, 'webkitRelativePath', {
+          value: path ? path + '/' + name : name,
+          writable: false
+        });
+        fileList.push(file);
+      } catch (e) {
+        console.warn('Could not read file:', name, e);
+      }
+    } else if (handle.kind === 'directory') {
+      await collectFilesFromHandle(handle, fileList, path ? path + '/' + name : name);
+    }
+  }
+}
+
 // Click on dropzone opens file input (not folder)
 dropZone.addEventListener('click', (e) => {
   // Don't trigger if clicking on buttons inside the dropzone
   if (e.target.tagName === 'BUTTON') return;
   fileInput.click();
 });
+
+// Drag & drop: support files AND folders
 dropZone.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); dropZone.classList.add('dragover'); });
 dropZone.addEventListener('dragleave', e => { e.preventDefault(); e.stopPropagation(); dropZone.classList.remove('dragover'); });
-dropZone.addEventListener('drop', e => {
+dropZone.addEventListener('drop', async e => {
   e.preventDefault(); e.stopPropagation();
   dropZone.classList.remove('dragover');
-  if(e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
+  
+  // Try to use DataTransferItem.webkitGetAsEntry for folder support
+  const items = e.dataTransfer.items;
+  if (items && items.length > 0) {
+    const files = [];
+    const entries = [];
+    
+    for (let i = 0; i < items.length; i++) {
+      const entry = items[i].webkitGetAsEntry ? items[i].webkitGetAsEntry() : null;
+      if (entry) {
+        entries.push(entry);
+      } else if (items[i].kind === 'file') {
+        const file = items[i].getAsFile();
+        if (file) files.push(file);
+      }
+    }
+    
+    if (entries.length > 0) {
+      // Process entries (may include folders)
+      for (const entry of entries) {
+        await readEntry(entry, files, '');
+      }
+    }
+    
+    if (files.length > 0) {
+      uploadFiles(files);
+    }
+  } else if (e.dataTransfer.files.length) {
+    uploadFiles(e.dataTransfer.files);
+  }
 });
+
+// Recursively read FileSystemEntry (file or folder) from drag & drop
+function readEntry(entry, fileList, path) {
+  return new Promise((resolve) => {
+    if (entry.isFile) {
+      entry.file(file => {
+        Object.defineProperty(file, 'webkitRelativePath', {
+          value: path ? path + '/' + file.name : file.name,
+          writable: false
+        });
+        fileList.push(file);
+        resolve();
+      }, () => resolve());
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const readBatch = () => {
+        reader.readEntries(async (entries) => {
+          if (entries.length === 0) {
+            resolve();
+            return;
+          }
+          const promises = entries.map(e => readEntry(e, fileList, path ? path + '/' + entry.name : entry.name));
+          await Promise.all(promises);
+          // readEntries may not return all entries in one call; read more
+          readBatch();
+        }, () => resolve());
+      };
+      readBatch();
+    } else {
+      resolve();
+    }
+  });
+}
+
 fileInput.addEventListener('change', () => { if(fileInput.files.length) uploadFiles(fileInput.files); });
 folderInput.addEventListener('change', () => { if(folderInput.files.length) uploadFiles(folderInput.files); });
 

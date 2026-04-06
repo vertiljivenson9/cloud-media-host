@@ -122,14 +122,8 @@ export function getFileIcon(type) {
   return '📄';
 }
 
-// Get allowed content types
+// Get allowed content types — allows all file types
 export function isAllowedType(contentType) {
-  const allowed = [
-    'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/ogg', 'audio/aac',
-    'video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo',
-    'application/zip', 'application/x-zip-compressed',
-    'application/x-rar-compressed', 'application/x-7z-compressed',
-    'image/jpeg', 'image/png', 'image/gif', 'image/webp'
-  ];
-  return allowed.some(t => contentType.includes(t.split('/')[0]) || contentType === t);
+  // Allow all file types — the user manages what goes in each folder
+  return true;
 }
