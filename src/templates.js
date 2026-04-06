@@ -1173,7 +1173,7 @@ ${BASE_CSS}
   }
 
   // ============================================
-  // DRIVE FOLDER PICKER
+  // DRIVE FOLDER PICKER (Mobile-friendly)
   // ============================================
   var dpOverlay = document.getElementById('drivePickerOverlay');
   var dpList = document.getElementById('drivePickerList');
@@ -1185,8 +1185,26 @@ ${BASE_CSS}
 
   var dpBreadcrumbTrail = [{ id: 'root', name: 'Mi Drive' }];
   var dpSelectedFolder = null;
-  var dpTargetInput = null; // the input element that will receive the folder ID
-  var dpTargetEntry = null; // the folder-entry div (to also fill the name)
+  var dpTargetInput = null;
+  var dpTargetEntry = null;
+
+  // Helper: get Firebase token, wait if necessary
+  async function dpGetToken() {
+    // If token already available, return it
+    if (window.__firebaseToken) return window.__firebaseToken;
+    // If Firebase auth is initialized, try to get fresh token
+    if (window.__firebaseAuth) {
+      var currentUser = window.__firebaseAuth.currentUser;
+      if (currentUser) {
+        try {
+          var token = await currentUser.getIdToken(true); // force refresh
+          window.__firebaseToken = token;
+          return token;
+        } catch (e) { /* fall through */ }
+      }
+    }
+    return null;
+  }
 
   window.openDrivePicker = function(btn) {
     dpTargetEntry = btn.closest('.folder-entry');
@@ -1203,7 +1221,6 @@ ${BASE_CSS}
   dpCloseBtn.onclick = function() { dpOverlay.classList.remove('open'); };
   dpCancelBtn.onclick = function() { dpOverlay.classList.remove('open'); };
 
-  // Click outside modal box to close
   dpOverlay.addEventListener('click', function(e) {
     if (e.target === dpOverlay) dpOverlay.classList.remove('open');
   });
@@ -1211,16 +1228,14 @@ ${BASE_CSS}
   dpOkBtn.onclick = function() {
     if (!dpSelectedFolder || !dpTargetInput) return;
     dpTargetInput.value = dpSelectedFolder.id;
-    // Auto-fill name if empty
     var nameInput = dpTargetEntry.querySelector('.folder-name');
     if (nameInput && !nameInput.value.trim()) {
       nameInput.value = dpSelectedFolder.name;
     }
     dpOverlay.classList.remove('open');
-    // Show a toast confirmation
     var toast = document.createElement('div');
     toast.className = 'toast success';
-    toast.textContent = '✓ Carpeta seleccionada: ' + dpSelectedFolder.name;
+    toast.textContent = '\\u2713 Carpeta seleccionada: ' + dpSelectedFolder.name;
     document.body.appendChild(toast);
     setTimeout(function() { toast.remove(); }, 2000);
   };
@@ -1245,28 +1260,35 @@ ${BASE_CSS}
     dpSelectedFolder = null;
     dpOkBtn.disabled = true;
 
+    // Wait for Firebase token (up to 3 seconds)
+    var token = await dpGetToken();
+
     var url = '/api/drive/folders?parentId=' + encodeURIComponent(parentId);
     if (searchQuery) url += '&q=' + encodeURIComponent(searchQuery);
 
+    var fetchOpts = { credentials: 'include' };
+    if (token) {
+      fetchOpts.headers = { 'Authorization': 'Bearer ' + token };
+    }
+
     try {
-      var fetchOpts = { credentials: 'include' };
-      // Send Firebase token if available
-      if (window.__firebaseToken) {
-        fetchOpts.headers = { 'Authorization': 'Bearer ' + window.__firebaseToken };
-      }
       var res = await fetch(url, fetchOpts);
       var data = await res.json();
 
       if (!data.success) {
-        dpList.innerHTML = '<div class="drive-picker-empty" style="color:var(--danger)">' + (data.error || 'Error al cargar carpetas') + '</div>';
+        var errMsg = data.error || 'Error al cargar carpetas';
+        if (res.status === 401) {
+          errMsg = 'Sesion expirada. Recarga la pagina e intenta de nuevo.';
+        }
+        dpList.innerHTML = '<div class="drive-picker-empty" style="color:var(--danger)">' + errMsg + '</div>';
         if (data.detail) {
-          dpList.innerHTML += '<div style="padding:8px 20px;font-size:11px;color:var(--text-muted)">' + data.detail + '</div>';
+          dpList.innerHTML += '<div style="padding:8px 20px;font-size:11px;color:var(--text-muted);word-break:break-all">' + data.detail + '</div>';
         }
         return;
       }
 
       dpRenderBreadcrumb(searchQuery);
-      dpRenderFolders(data.folders);
+      dpRenderFolders(data.folders || []);
     } catch(err) {
       dpList.innerHTML = '<div class="drive-picker-empty" style="color:var(--danger)">Error de conexion: ' + err.message + '</div>';
     }
@@ -1293,44 +1315,44 @@ ${BASE_CSS}
       iconDiv.innerHTML = '${IC.folder}';
 
       // Folder name — click to enter subfolder
-      var nameDiv = document.createElement('div');
-      nameDiv.className = 'dpi-name';
-      nameDiv.textContent = folder.name;
-      nameDiv.title = folder.name;
-      nameDiv.addEventListener('click', function() {
+      var nameSpan = document.createElement('span');
+      nameSpan.className = 'dpi-name';
+      nameSpan.textContent = folder.name;
+      nameSpan.title = folder.name;
+      nameSpan.style.cssText = 'flex:1;font-size:13px;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer';
+      nameSpan.addEventListener('click', function() {
+        dpBreadcrumbTrail.push({ id: folder.id, name: folder.name });
+        dpSearchInput.value = '';
+        dpLoadFolders(folder.id);
+      });
+
+      // Chevron — enter subfolder (visual affordance)
+      var enterBtn = document.createElement('button');
+      enterBtn.type = 'button';
+      enterBtn.className = 'dpi-enter';
+      enterBtn.title = 'Entrar en esta carpeta';
+      enterBtn.innerHTML = '${IC.chevronRight}';
+      enterBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
         dpBreadcrumbTrail.push({ id: folder.id, name: folder.name });
         dpSearchInput.value = '';
         dpLoadFolders(folder.id);
       });
 
       // "Seleccionar" button — explicit action, works on mobile
-      var actionDiv = document.createElement('div');
-      actionDiv.className = 'dpi-action';
       var selectBtn = document.createElement('button');
       selectBtn.type = 'button';
       selectBtn.textContent = 'Seleccionar';
+      selectBtn.style.cssText = 'background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);padding:6px 12px;font-size:11px;font-weight:600;font-family:var(--font);cursor:pointer;white-space:nowrap;flex-shrink:0;transition:all var(--transition)';
       selectBtn.addEventListener('click', function(e) {
         e.stopPropagation();
         dpSelectFolder(folder, item);
       });
-      actionDiv.appendChild(selectBtn);
-
-      // Chevron — enter subfolder
-      var enterDiv = document.createElement('div');
-      enterDiv.className = 'dpi-enter';
-      enterDiv.title = 'Entrar en esta carpeta';
-      enterDiv.innerHTML = '${IC.chevronRight}';
-      enterDiv.addEventListener('click', function(e) {
-        e.stopPropagation();
-        dpBreadcrumbTrail.push({ id: folder.id, name: folder.name });
-        dpSearchInput.value = '';
-        dpLoadFolders(folder.id);
-      });
 
       item.appendChild(iconDiv);
-      item.appendChild(nameDiv);
-      item.appendChild(actionDiv);
-      item.appendChild(enterDiv);
+      item.appendChild(nameSpan);
+      item.appendChild(enterBtn);
+      item.appendChild(selectBtn);
       dpList.appendChild(item);
     });
   }
